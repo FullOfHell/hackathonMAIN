@@ -1,6 +1,50 @@
 # Reltix / centrix Hackathon Project
 
-An end-to-end, context-aware maintenance coordinator for the MAIN Summit AI Hackathon. The demo turns a resident's "no heating" report into a completed repair: centrix context is reused, a simulated contractor receives the job, an appointment is booked, and the repair outcome and invoice are linked back to the unit.
+## Launch the demo on Windows
+
+After first-time setup, double-click **start-demo.cmd** or run it from the checkout in PowerShell.
+
+```powershell
+.\start-demo.cmd
+```
+
+Open the [resident portal](http://localhost:5173) once Vite says it is ready. The **centrix backend** window runs FastAPI on port 8000. The **centrix portal** window runs Vite on port 5173 and points it at that API for this session. From another directory, invoke the launcher by its quoted path, for example `& 'C:\Projects\centrix demo\start-demo.cmd'`.
+
+To stop the demo, press **Ctrl+C in each server window**, confirm with **Y** if prompted, then close the windows. If you launch twice, the new windows show the port conflicts and the first servers keep running. The API also has a [health check](http://localhost:8000/api/health) and [interactive API docs](http://localhost:8000/docs).
+
+### First-time setup
+
+Install Git for Windows (including Git Bash), Python 3.10 or newer, and Node.js 22.12 or newer with npm. Run the setup script from the repository root in **Git Bash**.
+
+```bash
+bash scripts/setup.sh
+```
+
+Setup enables the Git hooks, creates the backend virtual environment, installs backend and frontend dependencies, and creates `backend/.env` if missing. The local demo uses synthetic data, a simulated HeatFix contractor and deterministic intake. The default setup works without API keys.
+
+### Manual two-terminal fallback
+
+Open two PowerShell terminals in the repository root. Start the backend in the first.
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+```
+
+Start the live portal in the second.
+
+```powershell
+cd frontend
+$env:VITE_API_BASE_URL = 'http://localhost:8000'
+npm.cmd run dev -- --port 5173 --strictPort
+```
+
+### Walk through a heating report
+
+1. In **Report**, enter “No heat since last night.” Review the editable summary, answer any follow-up, choose the fields to share and select **Approve and send**.
+2. In **HeatFix inbox**, find the job for that case, select **Accept**, then **Offer slots**. Return to **Report**, refresh the case, select a time and choose **Confirm appointment**.
+3. In **HeatFix inbox**, refresh the job list, select **Start repair**, then **Complete repair**. Enter a repair summary and select **Save completion**.
+4. Select **Submit demo invoice**, then **Confirm demo invoice**. Open **My cases** or **Manager** to check the same case and unit, read the repair outcome and download the synthetic invoice.
 
 ## Start here
 
@@ -17,6 +61,8 @@ Everyone - including AI coding tools - should read these files before changing t
 If these documents conflict, the official track description wins for challenge requirements. `AGENTS.md` wins for repository working conventions.
 
 ## MVP demo
+
+This maintenance coordinator is the Reltix demo for the MAIN Summit AI Hackathon. It uses centrix property context to take a resident's heating report through booking, repair and invoicing on the same unit.
 
 ```text
 resident reports no heating
@@ -53,7 +99,7 @@ npm install
 npm run dev
 ```
 
-For the live demo, start FastAPI, copy `frontend/.env.example` to `frontend/.env.local`, and restart Vite. The template uses `http://localhost:8000`. Open the frontend at `http://localhost:5173`, submit a heating report, approve the sharing request, then open **HeatFix inbox** to see the job. Leave `VITE_API_BASE_URL` unset for an offline fixture demo. Fixture reports reset on page reload.
+For a persistent local development setting, copy `frontend/.env.example` to `frontend/.env.local` and restart Vite. The Windows launcher supplies the same API URL for its portal session. Leave `VITE_API_BASE_URL` unset for an offline fixture demo. Fixture reports reset on page reload.
 
 Before opening a pull request, run:
 
@@ -63,10 +109,6 @@ npm run build
 ```
 
 Shared frontend, backend and integration fixtures are stored in `shared/fixtures/`. Treat their shape as a team contract.
-
-## Setup
-
-From the repo root in Git Bash: `bash scripts/setup.sh` (installs everything, safe to re-run).
 
 ## Run the backend
 
@@ -109,14 +151,3 @@ For the P1 backend demo, submit “No heat at all” from the two seeded units u
 - Open small pull requests and state which acceptance test they enable.
 - Do not commit `.env` files, API keys, tokens, real personal data, or generated dependency folders.
 - Merge only code that preserves the deterministic typed demo path.
-
-## Current status
-
-The browser flow runs from a typed report to a closed case with a synthetic invoice.
-
-1. In **Report**, describe the issue, review the summary, and approve the sharing request.
-2. In **HeatFix inbox**, accept the job and offer slots. Return to **Report** to confirm an offered time.
-3. In **HeatFix inbox**, select **Start repair**, then **Complete repair** and save a short summary.
-4. Submit the demo invoice. Open **My cases** or **Manager** to read the outcome and download the invoice JSON.
-
-See the [connector specification](Docs/connector-spec.md) for the API. Typed intake works independently of structured extraction.
