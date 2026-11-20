@@ -1,0 +1,58 @@
+{
+  "name": "Connector v1 - dispatch approved order",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "connector/approved-dispatch",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "id": "8f9e6245-575a-4a8a-9405-0140938c2ce3",
+      "name": "Sharing approved",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "97924400-5795-4685-87c1-5c1ec2fbc162"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nif (body?.event !== 'maintenance.sharing_approved' || typeof body.case_id !== 'string' || !body.case_id.trim() || body.case_id.length > 64) {\n  throw new Error('Expected a sharing approval event with a case ID');\n}\nreturn [{ json: { case_id: body.case_id } }];"
+      },
+      "id": "a94d3671-dfdb-409c-b359-076ee93a143a",
+      "name": "Validate sharing approval event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://connector-gateway.example.invalid/api/integrations/approved-dispatch",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "redirect": { "redirect": { "followRedirects": false } },
+          "timeout": 8000
+        }
+      },
+      "id": "f3fd0bd0-8e38-4ea2-a5db-b13edecc0745",
+      "name": "Dispatch stored order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0]
+    }
+  ],
+  "connections": {
+    "Sharing approved": { "main": [[{ "node": "Validate sharing approval event", "type": "main", "index": 0 }]] },
+    "Validate sharing approval event": { "main": [[{ "node": "Dispatch stored order", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "none" }
+}

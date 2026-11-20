@@ -1,6 +1,6 @@
-# Heating repair connector v1.0
+# Service connector v1.0
 
-The centrix stand-in owns cases and appointments. The simulated HeatFix contractor owns jobs, offers and bookings. They exchange JSON over HTTP. The examples live in [the shared fixtures](../shared/fixtures/).
+The centrix stand-in owns cases and appointments. Delivery providers own their jobs, appointment offers and bookings. They exchange JSON over HTTP. HeatFix is the heating example in [the shared fixtures](../shared/fixtures/).
 
 The SQLite registry loads new simulated partners from `backend/seed/partner-registrations/` at startup and preserves existing routing settings. Try `GET /api/integrations/partners?category=internet&region=Aachen&trigger=tenant.move_in` to discover FibreNet. Its capabilities describe the proposed move-in offer and signed contract to be written back to the unit. [FibreNet manifest](../backend/seed/partner-registrations/fibrenet.json)
 
@@ -70,9 +70,19 @@ Linked timelines persist `building.repair_updated` on status changes. Shared clo
 | Partner declines or cannot finish | Use `/reject` on a pending job, or `POST /partners/heatfix/connector/jobs/{job_id}/fail` with a `reason` while the job is active. The case records `DECLINED` or `FAILED`, respectively. |
 | Manager takes ownership | `POST /api/cases/{case_id}/escalate`, empty body, moves a `DECLINED`, `FAILED` or `NO_PROVIDER_AVAILABLE` case to `NEEDS_HUMAN_REVIEW`. Repeating the action returns the same case. Other states return 409. |
 
-## Adding an internet partner
+## Adding a delivery provider
 
-The backend registers and discovers a simulated FibreNet provider. Offer delivery and contract write-back below describe the proposed move-in workflow.
+Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
+
+1. Add a manifest in `backend/seed/partner-registrations/` with a unique `partner_id`, `kind: delivery`, a `base_url`, categories, regions, and the `maintenance.case_created` trigger. Restart FastAPI. A local `/partners/{slug}` base uses the built-in simulator. For an external provider, use the HTTPS base URL of a connector v1 adapter implementing job creation, any advertised actions, and authenticated callbacks. Put provider-specific API calls and credentials behind that adapter.
+2. Declare `address`, `unit`, and `issue` as required. The manifest can also require or allow supported consent fields. FastAPI presents those fields and validates approval before persisting the order. If the new service needs fields or outcomes outside connector v1, it needs an extension to the contract.
+3. Use either direct dispatch or the [provider-neutral n8n workflow](../n8n/README.md#provider-neutral-workflow). The same workflow forwards an approved case ID to a fixed gateway. FastAPI chooses the provider by category, region, activation and trigger, and the gateway reads that choice from the saved case. Its request accepts only the case ID. The partner still receives the v1 order and a stable idempotency key.
+
+**Verify a new registration.** Use the manifest’s category as `issue_type` in the [case fixture](../shared/fixtures/case-create.json). Submit it to `POST /api/cases` for a unit in a covered region, confirm the expected provider was selected, then approve the fields returned in `sharing_request`. Check `{base_url}/connector/jobs` for the job. Replay the dispatch and confirm the job ID is reused. The [registration tests](../backend/tests/test_partner_registration.py) exercise this using temporary manifests for categories outside the bundled delivery demo.
+
+## Adding an internet move-in offer
+
+The registry also discovers FibreNet's simulated move-in offer. The offer lifecycle and service-contract write-back below are proposed. They are distinct from a support visit using the delivery contract above.
 
 Connector v1 supports two partner kinds with the same envelope, security and idempotency rules:
 

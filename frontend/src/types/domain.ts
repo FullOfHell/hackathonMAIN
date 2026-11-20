@@ -74,7 +74,7 @@ export interface UnitContext {
 export interface CreateCaseRequest {
   unit_id: string
   resident_id: string
-  issue_type: 'heating_repair'
+  issue_type: string
   description: string
   symptoms: string[]
   availability_preferences?: string[]
@@ -175,7 +175,7 @@ export interface PartnerJob {
   schema_version: '1.0'
   request_id: string
   idempotency_key: string
-  service_type: 'heating_repair'
+  service_type: string
   property: Record<string, string>
   issue: {
     description: string
