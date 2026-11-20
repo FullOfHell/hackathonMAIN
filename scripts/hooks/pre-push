@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Runs backend tests + branch coverage before every push. Skip in an emergency with: git push --no-verify
+root=$(git rev-parse --show-toplevel)
+cd "$root/backend" || exit 0
+if [ -x .venv/Scripts/python.exe ]; then py=.venv/Scripts/python.exe
+elif [ -x .venv/bin/python ]; then py=.venv/bin/python
+else py=python; fi
+echo "pre-push: running backend tests with branch coverage..."
+if ! "$py" -m pytest -q --cov --cov-report=term-missing:skip-covered; then
+  echo "BLOCKED: backend tests failed or coverage is below the threshold. Fix before pushing."; exit 1
+fi
+exit 0
