@@ -8,3 +8,4 @@ The prototype simulates centrix and the partner. It is not connected to the real
 - **Routing:** deterministic: service type, then region, then active; tie-break by name. A second partner (Köln) exists in seed data to show region filtering.
 - **Data sharing:** only fields the resident approves are sent. `address`, `unit` and `issue` are required for a repair job; name, contact, heating type, access details and prior heating case are optional.
 - **Access details:** the key-safe code is never shared automatically; the property manager releases it after booking.
+- **n8n dispatch:** FastAPI sends the approved connector order after persisting sharing approval and records the job ID returned by n8n. A failed acknowledgment leaves the approval available for retry with the same idempotency key. See the [workflow contract](../n8n/README.md#backend-contract).

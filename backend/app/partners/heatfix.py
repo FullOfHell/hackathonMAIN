@@ -29,13 +29,16 @@ def capabilities():
 def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db)):
     if job.service_type != "heating_repair":
         raise HTTPException(422, "unsupported service_type")
-    existing = conn.execute("SELECT * FROM partner_jobs WHERE idempotency_key=?", (job.idempotency_key,)).fetchone()
-    if existing:
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    inserted = conn.execute("INSERT INTO partner_jobs VALUES (?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
+                            (job_id, PARTNER_ID, job.idempotency_key, job.request_id, job.model_dump_json(),
+                             "received", now_iso()))
+    if not inserted.rowcount:
+        existing = conn.execute("SELECT id, status FROM partner_jobs WHERE idempotency_key=?",
+                                (job.idempotency_key,)).fetchone()
+        conn.commit()
         response.status_code = 200
         return {"job_id": existing["id"], "status": existing["status"], "duplicate": True}
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
-    conn.execute("INSERT INTO partner_jobs VALUES (?,?,?,?,?,?,?)",
-                 (job_id, PARTNER_ID, job.idempotency_key, job.request_id, job.model_dump_json(), "received", now_iso()))
     conn.commit()
     return {"job_id": job_id, "status": "received", "duplicate": False}
 

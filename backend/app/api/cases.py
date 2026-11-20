@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.db import get_db, now_iso
-from app.integrations.connector import build_job_request, create_job, get_partner_client
+from app.integrations.connector import N8nDispatchError, build_job_request, dispatch_job, get_partner_client
 from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
                          SharingApprovalIn)
 from app.services import cases as svc
@@ -86,6 +86,8 @@ def get_events(case_id: str, conn=Depends(get_db)):
 @router.post("/cases/{case_id}/sharing-approval")
 def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
                     partner_client=Depends(get_partner_client)):
+    # Serialize approval writes, then release the lock before external calls.
+    conn.execute("BEGIN IMMEDIATE")
     case = _case_or_404(conn, case_id)
     if body.approved_by != case["resident_id"]:
         raise HTTPException(403, "only the reporting resident can approve sharing")
@@ -109,24 +111,34 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
                                                body.channel, body.approved_by, now_iso()))
         svc.record_event(conn, case_id, "sharing.approved", f"resident:{body.approved_by}",
                          {"fields": sorted(body.approved_fields), "channel": body.channel})
-        conn.commit()  # release the SQLite write lock before calling the partner
+    conn.commit()
 
     case = svc.get_case(conn, case_id)
     ctx = svc.unit_context(conn, case["unit_id"])
     resident = conn.execute("SELECT * FROM residents WHERE id=?", (case["resident_id"],)).fetchone()
     partner = dict(conn.execute("SELECT * FROM partners WHERE id=?", (case["partner_id"],)).fetchone())
     job = build_job_request(case, ctx, dict(resident), case["sharing_approval"])
-    # TODO(C): when N8N_CASE_WEBHOOK_URL is set, hand this event to n8n instead (plan §6E Workflow 1).
     try:
-        result = create_job(partner_client, partner, job)
+        result = dispatch_job(partner_client, partner, job)
+    except N8nDispatchError as e:
+        # The partner may have stored the job before n8n timed out. Retry with the same key.
+        conn.execute("BEGIN IMMEDIATE")
+        current = _case_or_404(conn, case_id)
+        if current["partner_job_id"]:
+            return current
+        svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)})
+        conn.commit()
+        raise HTTPException(502, "n8n dispatch was not confirmed; sharing approval can be retried") from e
     except Exception as e:  # partner unreachable or rejected: explicit failure, never fake success
         svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)[:300]})
         svc.transition(conn, case_id, CaseStatus.NEEDS_HUMAN_REVIEW, "system", {"reason": "partner request failed"})
         conn.commit()
         raise HTTPException(502, "partner job request failed; case escalated for human review")
-    conn.execute("UPDATE cases SET partner_job_id=?, updated_at=? WHERE id=?", (result["job_id"], now_iso(), case_id))
-    svc.record_event(conn, case_id, "partner.job_requested", "system",
-                     {"partner_id": partner["id"], "job_id": result["job_id"], "duplicate": result.get("duplicate", False),
-                      "idempotency_key": job.idempotency_key})
+    linked = conn.execute("UPDATE cases SET partner_job_id=?, updated_at=? WHERE id=? AND partner_job_id IS NULL",
+                          (result["job_id"], now_iso(), case_id))
+    if linked.rowcount:
+        svc.record_event(conn, case_id, "partner.job_requested", "system",
+                         {"partner_id": partner["id"], "job_id": result["job_id"],
+                          "duplicate": result.get("duplicate", False), "idempotency_key": job.idempotency_key})
     conn.commit()
     return svc.get_case(conn, case_id)

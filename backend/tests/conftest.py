@@ -8,6 +8,7 @@ def client(tmp_path, monkeypatch):
     from app.integrations.connector import get_partner_client
     from app.main import app
 
+    monkeypatch.setenv("N8N_CASE_WEBHOOK_URL", "")
     with TestClient(app) as c:
         app.dependency_overrides[get_partner_client] = lambda: c  # partner calls go in-process
         yield c

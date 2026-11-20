@@ -1,0 +1,67 @@
+{
+  "name": "Heating repair - dispatch after sharing approval",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "maintenance/sharing-approved",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "id": "3dd20e38-ec5e-4c28-836f-8d70860e6688",
+      "name": "Sharing approved",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "3328153b-8399-48d3-8220-ba126a47729a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { body } = $input.first().json;\nif (body?.event !== 'maintenance.sharing_approved' || typeof body.case_id !== 'string' || !body.case_id.trim()) {\n  throw new Error('Expected a maintenance.sharing_approved event with a case ID');\n}\nconst { order } = body;\nif (order?.schema_version !== '1.0' || order.request_id !== body.case_id || typeof order.idempotency_key !== 'string' || !order.idempotency_key.trim()) {\n  throw new Error('Expected a connector v1 order for this case with a stable idempotency key');\n}\nreturn [{ json: order }];"
+      },
+      "id": "5d0ffd3a-d6ef-4ea1-b767-2bec201d818e",
+      "name": "Validate event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://backend.example.invalid/partners/heatfix/connector/jobs",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "redirect": { "redirect": { "followRedirects": false } },
+          "timeout": 5000
+        }
+      },
+      "id": "4d639069-a693-485b-b904-4aaa0594a6b7",
+      "name": "Create or reuse HeatFix job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { job_id, duplicate } = $input.first().json;\nif (typeof job_id !== 'string' || !job_id.trim()) {\n  throw new Error('HeatFix did not return a job ID');\n}\nconst { request_id } = $('Validate event').first().json;\nreturn [{ json: { case_id: request_id, job_id, duplicate: duplicate === true } }];"
+      },
+      "id": "55ebbf10-63c3-4fef-ba24-737f20168fe7",
+      "name": "Return dispatch result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Sharing approved": { "main": [[{ "node": "Validate event", "type": "main", "index": 0 }]] },
+    "Validate event": { "main": [[{ "node": "Create or reuse HeatFix job", "type": "main", "index": 0 }]] },
+    "Create or reuse HeatFix job": { "main": [[{ "node": "Return dispatch result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "none" }
+}
