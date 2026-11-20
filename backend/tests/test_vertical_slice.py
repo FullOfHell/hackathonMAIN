@@ -2,6 +2,9 @@
 import json
 from pathlib import Path
 
+import httpx
+
+from app.integrations.connector import get_partner_client
 from app.states import ALLOWED_TRANSITIONS, CaseStatus, InvalidTransition, check_transition
 
 FIXTURES = Path(__file__).resolve().parents[2] / "shared" / "fixtures"
@@ -65,6 +68,70 @@ def test_unapproved_fields_are_not_shared(client):
     job = [j for j in client.get("/partners/heatfix/connector/jobs").json() if j["request_id"] == case["id"]][0]
     assert job["payload"]["resident"] == {}
     assert "access_details" not in job["payload"]["property"]
+
+
+def test_n8n_dispatch_retries_after_lost_acknowledgment(client, monkeypatch):
+    webhook_url = "https://n8n.example.invalid/webhook/maintenance/sharing-approved"
+    monkeypatch.setenv("N8N_CASE_WEBHOOK_URL", webhook_url)
+    monkeypatch.setenv("N8N_WEBHOOK_SECRET", "test-secret")
+    case_id = create_case(client)["id"]
+    approval_url = f"/api/cases/{case_id}/sharing-approval"
+    approval = load("sharing-approval.json") | {"approved_fields": ["address", "unit", "issue"]}
+    attempts = []
+    job_ids = []
+
+    def simulate_workflow(request):
+        assert request.method == "POST"
+        assert str(request.url) == webhook_url
+        assert request.headers["X-N8N-Webhook-Secret"] == "test-secret"
+        event = json.loads(request.content)
+        assert event["event"] == "maintenance.sharing_approved"
+        assert event["case_id"] == event["order"]["request_id"] == case_id
+        assert event["order"]["resident"] == {}
+        assert set(event["order"]["property"]) == {"address", "unit"}
+        persisted_case = client.get(f"/api/cases/{case_id}").json()
+        assert persisted_case["sharing_approval"]["shared_fields"] == sorted(approval["approved_fields"])
+        attempts.append(event)
+        forwarded = client.post("/partners/heatfix/connector/jobs", json=event["order"])
+        assert forwarded.status_code == (201 if len(attempts) == 1 else 200)
+        result = forwarded.json()
+        job_ids.append(result["job_id"])
+        if len(attempts) == 1:
+            raise httpx.ReadTimeout("workflow response lost", request=request)
+        return httpx.Response(200, json={"case_id": case_id, "job_id": result["job_id"],
+                                         "duplicate": result["duplicate"]})
+
+    assert client.get("/partners/heatfix/connector/jobs").json() == []
+    with httpx.Client(transport=httpx.MockTransport(simulate_workflow)) as n8n_client:
+        client.app.dependency_overrides[get_partner_client] = lambda: n8n_client
+        first = client.post(approval_url, json=approval)
+        assert first.status_code == 502
+        assert "n8n dispatch was not confirmed" in first.json()["detail"]
+        pending = client.get(f"/api/cases/{case_id}").json()
+        assert pending["status"] == "PARTNER_REQUESTED"
+        assert pending["partner_job_id"] is None
+        retry = client.post(approval_url, json=approval)
+        assert retry.status_code == 200, retry.text
+        assert client.post(approval_url, json=approval).json()["partner_job_id"] == job_ids[0]
+    client.app.dependency_overrides[get_partner_client] = lambda: client
+
+    jobs = client.get("/partners/heatfix/connector/jobs").json()
+    assert len(jobs) == 1
+    assert job_ids == [jobs[0]["id"], jobs[0]["id"]]
+    assert retry.json()["partner_job_id"] == jobs[0]["id"]
+    assert len(attempts) == 2
+    assert attempts[0] == attempts[1]
+    events = client.get(f"/api/cases/{case_id}/events").json()
+    assert [event["type"] for event in events].count("partner.job_requested") == 1
+
+    job_url = f"/partners/heatfix/connector/jobs/{job_ids[0]}"
+    assert client.post(f"{job_url}/accept").status_code == 200
+    assert client.post(f"{job_url}/offer-slots").status_code == 200
+    offered = client.get(f"/api/cases/{case_id}").json()
+    booking = client.post(f"/api/cases/{case_id}/select-slot",
+                          json={"slot_id": offered["slots"][0]["slot_id"], "resident_id": offered["resident_id"]})
+    assert booking.status_code == 200, booking.text
+    assert booking.json()["status"] == "SCHEDULED"
 
 
 def test_missing_required_field_rejected(client):

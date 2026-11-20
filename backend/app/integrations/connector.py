@@ -6,6 +6,10 @@ import httpx
 from app.schemas import PartnerJobRequest
 
 
+class N8nDispatchError(Exception):
+    """The configured workflow did not acknowledge the partner job."""
+
+
 def get_partner_client():
     """HTTP client for partner endpoints. Tests override this dependency."""
     base = os.getenv("PARTNER_BASE_URL", "http://localhost:8000")
@@ -54,6 +58,35 @@ def create_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> d
     resp = client.post(f"{partner['base_url']}/connector/jobs", json=job.model_dump())
     resp.raise_for_status()
     return resp.json()
+
+
+def dispatch_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> dict:
+    webhook_url = os.getenv("N8N_CASE_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return create_job(client, partner, job)
+
+    secret = os.getenv("N8N_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise N8nDispatchError("N8N_WEBHOOK_SECRET is missing")
+
+    try:
+        response = client.post(
+            webhook_url,
+            headers={"X-N8N-Webhook-Secret": secret},
+            json={"event": "maintenance.sharing_approved", "case_id": job.request_id, "order": job.model_dump()},
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
+        raise N8nDispatchError("n8n webhook request failed") from exc
+
+    if not isinstance(result, dict) or result.get("case_id") != job.request_id:
+        raise N8nDispatchError("n8n returned a response for an invalid case")
+    job_id = result.get("job_id")
+    if not isinstance(job_id, str) or not job_id.strip():
+        raise N8nDispatchError("n8n did not return a job ID")
+    return {"job_id": job_id, "duplicate": result.get("duplicate") is True}
 
 
 def book_slot(client: httpx.Client, partner_url: str, job_id: str, slot_id: str) -> None:

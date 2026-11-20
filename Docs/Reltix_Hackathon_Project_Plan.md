@@ -335,15 +335,13 @@ These weights are **our proposal**, not an official Reltix algorithm. For one pa
 
 ### E. n8n workflows
 
-**Workflow 1: Case submitted**
+**Workflow 1: Sharing approved**
 
 ```text
-Webhook: maintenance.case_created / sharing-approved
-  → Validate event + idempotency key
-  → HTTP Request: GET case context from FastAPI
-  → HTTP Request: POST job to generic partner connector
-  → HTTP Request: update/acknowledge integration state in FastAPI
-  → Notify resident that request was submitted (not yet completed)
+Authenticated webhook: maintenance.sharing_approved with the approved connector order
+  → Validate event, case ID and idempotency key
+  → HTTP Request: POST approved order to generic partner connector
+  → Return the job ID to FastAPI for persistence
 ```
 
 **Workflow 2: Partner responds**
