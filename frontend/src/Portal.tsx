@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { VoiceDraft } from './VoiceDraft'
+import { NotificationBell } from './NotificationBell'
+import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
@@ -39,18 +41,17 @@ const loadHome = () => api.getUnitContext(unitId)
 const loadUnitCases = () => api.listUnitCases(unitId)
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
-  '#inbox': 'HeatFix Aachen inbox', '#manager': 'Property manager',
-}
-
-function currentView(): keyof typeof views {
-  const hash = location.hash
-  return hash === '#cases' || hash === '#inbox' || hash === '#manager' ? hash : '#report'
+  '#manager': 'Property manager',
 }
 
 function App() {
-  const [view, setView] = useState(currentView)
+  const [hash, setHash] = useState(() => location.hash)
+  const partnerSlug = contractorInboxSlug(hash)
+  const view = partnerSlug ? '#inbox' : (hash === '#cases' || hash === '#manager' ? hash : '#report')
+  const otherPartner = partnerSlug && partnerSlug !== defaultContractorSlug
+  const inboxLabel = otherPartner ? 'Contractor inbox' : 'HeatFix inbox'
   useEffect(() => {
-    const navigate = () => setView(currentView())
+    const navigate = () => setHash(location.hash)
     window.addEventListener('hashchange', navigate)
     return () => window.removeEventListener('hashchange', navigate)
   }, [])
@@ -63,17 +64,19 @@ function App() {
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
               <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
-              <a href="#inbox" aria-current={view === '#inbox' ? 'page' : undefined}>HeatFix inbox</a>
+              <a href={contractorInboxHref(partnerSlug ?? defaultContractorSlug)}
+                aria-current={view === '#inbox' ? 'page' : undefined}>{inboxLabel}</a>
               <a href="#manager" aria-current={view === '#manager' ? 'page' : undefined}>Manager</a>
             </div>
+            {view !== '#manager' && <NotificationBell key={partnerSlug ? 'contractor:' + partnerSlug : 'resident'} partnerSlug={partnerSlug} unitId={unitId} />}
           </nav>
-          <h1>{views[view]}</h1>
+          <h1>{view === '#inbox' ? (otherPartner ? inboxLabel + ' · ' + partnerSlug : 'HeatFix Aachen inbox') : views[view]}</h1>
         </div>
       </header>
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
         {view === '#cases' && <ResidentCases />}
-        {view === '#inbox' && <Inbox />}
+        {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
         {view === '#manager' && <Manager />}
       </main>
       <footer>{isFixtureMode ? 'Fixture mode. Reports are simulated and reset on reload.' : 'Hackathon demo using fictional properties and a simulated contractor.'}</footer>
@@ -229,7 +232,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         if (latest?.partner_job_id || latest?.status === 'NEEDS_HUMAN_REVIEW') {
           setCurrent(latest)
         } else {
-          setError('HeatFix receipt could not be confirmed. You can retry sending this same case.')
+          setError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
         }
       } else {
         setError('Your case could not be saved. Your report is still here.')
@@ -365,11 +368,11 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
         </div>)}
         {sent && current && <div>
-          <h2 ref={stepHeading} tabIndex={-1}>{isFixtureMode ? 'Demo job created' : 'HeatFix has your report'}</h2>
+          <h2 ref={stepHeading} tabIndex={-1}>{isFixtureMode ? 'Demo job created' : 'Your contractor has your report'}</h2>
           <p>Case {current.id} · Job {current.partner_job_id}</p>
           <CaseProgress key={current.id} initial={current} active={active} />
           <div className="actions">
-            <a className="button" href="#inbox">View HeatFix inbox</a>
+            {current.partner_id === 'p_heatfix' && <a className="button" href="#inbox">View HeatFix inbox</a>}
             <button className="secondary" disabled={busy} onClick={reset}>Report another issue</button>
           </div>
         </div>}
@@ -388,8 +391,9 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   )
 }
 
-function Inbox() {
-  const jobs = useLoad(api.listPartnerJobs)
+function Inbox({ partnerSlug }: { partnerSlug: string }) {
+  const loadJobs = useCallback(() => api.listPartnerJobs(partnerSlug), [partnerSlug])
+  const jobs = useLoad(loadJobs)
   return (
     <section className="inbox" aria-label="Incoming repair jobs">
       <div className="inbox-heading"><h2>Incoming jobs</h2>
@@ -398,10 +402,10 @@ function Inbox() {
         </button>
       </div>
       {jobs.refreshed && <p className="muted" role="status">Inbox updated.</p>}
-      {jobs.failed ? <p className="panel error" role="alert">The HeatFix inbox could not be loaded. Try refreshing.</p>
+      {jobs.failed ? <p className="panel error" role="alert">The contractor inbox could not be loaded. Try refreshing.</p>
         : !jobs.data ? <p className="panel" role="status">Loading jobs…</p>
           : !jobs.data.length ? <p className="panel">No jobs yet. Approved reports will appear here.</p>
-            : jobs.data.map((job) => <JobCard key={job.id} job={job} />)}
+            : jobs.data.map((job) => <JobCard key={job.id} job={job} partnerSlug={partnerSlug} />)}
     </section>
   )
 }
@@ -444,7 +448,7 @@ function syntheticInvoice(jobId: string): RepairInvoiceInput {
   return { invoice_number: 'HF-DEMO-' + jobId, description: 'Heating repair and labour', amount_cents: 12500, currency: 'EUR' }
 }
 
-function JobCard({ job: initial }: { job: PartnerInboxJob }) {
+function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerSlug: string }) {
   const [job, setJob] = useState(initial)
   const [pending, setPending] = useState<PartnerAction | null>(null)
   const [retry, setRetry] = useState<PartnerCommand | null>(null)
@@ -467,7 +471,7 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
     setError('')
     setConfirmation('')
     try {
-      const updated = await api.updatePartnerJob(job.id, command)
+      const updated = await api.updatePartnerJob(partnerSlug, job.id, command)
       setJob(updated)
       setRetry(null)
       setEditing(null)
@@ -515,7 +519,7 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
 
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Heating repair</h3><span className="status" role="status">{caseStatusLabel(job.status)}</span></div>
+      <div className="inbox-heading"><h3>{caseStatusLabel(job.payload.service_type)}</h3><span className="status" role="status">{caseStatusLabel(job.status)}</span></div>
       <p>{property.address} · Unit {property.unit}</p>
       <p className="issue-copy">{issue.description}</p>
       {property.heating_type && <p>Heating · {property.heating_type}</p>}

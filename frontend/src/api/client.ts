@@ -1,4 +1,5 @@
 import { caseFixture, partnerJobFixture, unitContextFixture } from './fixtures'
+import { defaultContractorSlug } from '../repairNotifications'
 import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
 import type {
   CaseEvent,
@@ -34,6 +35,10 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     throw new Error(typeof failure?.detail === 'string' ? failure.detail : `API request failed (${response.status})`)
   }
   return response.json() as Promise<T>
+}
+
+function partnerJobsPath(partnerSlug: string) {
+  return '/partners/' + encodeURIComponent(partnerSlug) + '/connector/jobs'
 }
 
 export const api = {
@@ -94,14 +99,16 @@ export const api = {
         })
       : approveDemoCase(caseId, body),
 
-  listPartnerJobs: async (): Promise<PartnerInboxJob[]> =>
-    apiBaseUrl ? request('/partners/heatfix/connector/jobs')
-      : waitForFixture([...demoJobs.values()].reverse()),
+  listPartnerJobs: (partnerSlug: string): Promise<PartnerInboxJob[]> =>
+    apiBaseUrl ? request(partnerJobsPath(partnerSlug))
+      : waitForFixture(partnerSlug === defaultContractorSlug ? [...demoJobs.values()].reverse() : []),
 
-  updatePartnerJob: (jobId: string, command: PartnerCommand): Promise<PartnerInboxJob> =>
-    apiBaseUrl ? request('/partners/heatfix/connector/jobs/' + encodeURIComponent(jobId) + '/' + command.action, {
+  updatePartnerJob: (partnerSlug: string, jobId: string, command: PartnerCommand): Promise<PartnerInboxJob> => {
+    if (apiBaseUrl) return request(partnerJobsPath(partnerSlug) + '/' + encodeURIComponent(jobId) + '/' + command.action, {
       method: 'POST', body: command.body && JSON.stringify(command.body),
-    }) : updateDemoJob(jobId, command),
+    })
+    return partnerSlug === defaultContractorSlug ? updateDemoJob(jobId, command) : Promise.reject(new Error('Job unavailable.'))
+  },
 
   selectSlot: (caseId: string, slotId: string, residentId: string): Promise<MaintenanceCase> =>
     apiBaseUrl ? request('/api/cases/' + encodeURIComponent(caseId) + '/select-slot', {
