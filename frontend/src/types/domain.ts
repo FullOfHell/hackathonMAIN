@@ -148,3 +148,11 @@ export interface PartnerJob {
   sharing: { approved_fields: string[]; approved_at: string }
   callback_url: string
 }
+
+export interface PartnerInboxJob {
+  id: string
+  request_id: string
+  status: string
+  received_at: string
+  payload: PartnerJob
+}
