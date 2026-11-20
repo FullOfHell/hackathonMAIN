@@ -23,3 +23,44 @@ The prototype simulates centrix and the partner. It is not connected to the real
 - **Building consent.** An existing approved repair takes the call-out. Otherwise the first resident to approve becomes the dispatch contact. A linked resident's report, contact details and documents remain private to their own case. The shared timeline carries the repair status and the booked window. Only the dispatch case can book or approve an invoice. Already-issued independent jobs from older data require manual reconciliation.
 - **Partner registration.** Local JSON manifests describe simulated providers. Registration and discovery run offline. Internet offers, signatures and activation remain later steps in the connector design.
 - **Voice dictation.** Selecting Transcribe sends the recorded clip to OpenAI for speech-to-text. The app uses the editable transcript as report input and does not save the audio to the case. Transcription does not create a case or dispatch a job.
+
+## Resident profile API
+
+`PATCH /api/units/{unit_id}/residents/{resident_id}/profile` saves edits to the resident in SQLite. The required `acting_resident_id` simulates identity for the demo, like the resident ID on a slot selection. The path identifies the resident and their unit. IDs, move-in date, address, heating equipment and access details are read-only.
+
+Send at least one of `name`, `email`, `phone` and `preferred_contact`. Omit fields to keep their values. Each supplied value must be a nonblank string. The API trims surrounding whitespace. Names allow up to 120 characters. Email accepts an ASCII mailbox with a dotted domain, up to 254 characters. Phone accepts 7–15 digits in up to 40 characters, with an optional leading `+`, spaces, dots, hyphens and parenthesized groups. The supported preferences are `portal` and `email`.
+
+For example, send this body to `PATCH /api/units/unit_4b/residents/c_202/profile` on the seeded demo.
+
+```json
+{"acting_resident_id":"c_202","phone":"+49 151 00000001"}
+```
+
+HTTP 200 returns the complete resident object used in `GET /api/units/unit_4b/context` under `residents[]`. The portal uses this response in the profile and sharing preview. Repeating the PATCH returns the same values.
+
+```json
+{
+  "id": "c_202",
+  "unit_id": "unit_4b",
+  "name": "Lena Hoffmann",
+  "email": "lena@example.com",
+  "phone": "+49 151 00000001",
+  "preferred_contact": "portal",
+  "move_in": "2025-03-01"
+}
+```
+
+| Example request | HTTP | Response detail |
+| --- | --- | --- |
+| Use `"acting_resident_id":"c_203"` to edit `c_202` | 403 | `{"detail":"only the resident can edit their profile"}` |
+| Send the sample body to `/api/units/unit_2a/residents/c_202/profile` | 404 | `{"detail":"resident not found for this unit"}` |
+| Send only `{"acting_resident_id":"c_202"}` | 422 | `{"detail":"supply at least one profile field"}` |
+| Send `{"acting_resident_id":"c_202","address":"Changed"}` | 422 | FastAPI validation error in `detail[]` with `loc: ["body","address"]` and `type: "extra_forbidden"` |
+
+A profile save updates only the resident row. Cases, consent, dispatch and timeline events each retain their own API actions. A contact preference alone sends no message. For C, the existing `name` approval shares the current name and the existing `contact` approval shares the current email and phone together. Both use the values at approval time. A dispatch retry reuses the saved order payload and idempotency key.
+
+In the resident portal, **Your home → Edit my details** opens an inline form. Save sends the edited fields and keeps the report mounted, including its review text, case ID and sharing selections. Cancel discards the draft. A failed save leaves the form open for correction or retry. After a failed PATCH, a new approval checks the saved profile in case the server committed the change before the reply was lost.
+
+Approval waits for an in-flight profile save. Changing a selected or required name or contact value clears the approval checkbox. A preference change leaves the checkbox as it was. The first dispatch attempt captures the displayed values and approval body. If the outcome is uncertain, the portal waits for evidence of recorded consent before allowing another profile edit. Once consent is recorded, the resident can edit their profile while a retry continues to use the captured preview and saved order.
+
+Fixture mode uses a tab-local copy of the seeded resident for the home panel, consent preview and new HeatFix jobs. With session storage available, profile edits survive a reload in the same tab. Fixture reports and jobs follow their existing page lifetime. Each job keeps the values approved when it was created. A fresh browser session starts with the checked-in synthetic resident.

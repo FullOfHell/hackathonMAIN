@@ -44,11 +44,19 @@ export interface Resident {
   id: string
   unit_id: string
   name: string
+  email: string | null
+  phone: string | null
+  preferred_contact: string | null
+  move_in: string | null
+}
+
+export type ResidentProfileChanges = Partial<{
+  name: string
   email: string
   phone: string
-  preferred_contact: string
-  move_in: string
-}
+  preferred_contact: 'portal' | 'email'
+}>
+export type ResidentProfileDraft = Record<keyof ResidentProfileChanges, string>
 
 export interface UnitContext {
   unit_id: string
@@ -187,7 +195,7 @@ export interface PartnerJob {
   }
   resident: {
     name?: string
-    contact?: { email: string; phone: string }
+    contact?: Pick<Resident, 'email' | 'phone'>
   }
   sharing: { approved_fields: string[]; approved_at: string }
   callback_url: string

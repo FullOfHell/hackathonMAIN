@@ -4,7 +4,7 @@
 
    **Organizer answer.** Residents should ideally be able to edit most of their own information. The organizer left the rules for overwriting property records unspecified.
 
-   **Team decision.** Keep profile editing outside P0. Decide who may change a unit’s address or heating equipment before adding those controls.
+   **Team decision.** Residents can edit their own name, email, phone and contact preference in the demo through the profile API. IDs, move-in date, unit address, heating equipment and access details are read-only. The acting resident ID simulates identity. Partner sharing requires a separate approval. See the [profile API examples](assumptions.md#resident-profile-api).
 
 2. In pdf at "user experience" it says "a sensible choice of channel". Could you elaborate on that? The way we see it we'd send notifications (sms/mail) to tenants/contractors when something happens like the heater being repaired/broken or the request being accepted, and to PM's when a problem happens (and is fixed). Did you have something else in mind?
 

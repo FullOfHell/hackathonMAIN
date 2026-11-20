@@ -8,7 +8,10 @@ from fastapi.responses import JSONResponse
 from app.db import get_db, now_iso
 from app.integrations.connector import DispatchUnconfirmed, book_slot, build_job_request, dispatch_job, get_partner_client
 from app.partners.registry import sharing_policy
-from app.schemas import CaseCreate, DocumentKind, PartnerJobRequest, ResidentAction, ResidentSlotChoice, SharingApprovalIn
+from app.schemas import (
+    CaseCreate, DocumentKind, PartnerJobRequest, ResidentAction, ResidentProfile, ResidentProfilePatch,
+    ResidentSlotChoice, SharingApprovalIn,
+)
 from app.services import cases as svc
 from app.services import outages
 from app.states import CaseStatus, check_transition
@@ -41,6 +44,26 @@ def get_unit_context(unit_id: str, conn=Depends(get_db)):
     if not ctx:
         raise HTTPException(404, "unit not found")
     return ctx
+
+
+@router.patch("/units/{unit_id}/residents/{resident_id}/profile", response_model=ResidentProfile)
+def update_resident_profile(unit_id: str, resident_id: str, body: ResidentProfilePatch, conn=Depends(get_db)):
+    changes = {field: value for field, value in body.items() if field != "acting_resident_id"}
+    if not changes:
+        raise HTTPException(422, "supply at least one profile field")
+    if body["acting_resident_id"] != resident_id:
+        raise HTTPException(403, "only the resident can edit their profile")
+
+    # Column names come from the closed request schema. Bind every value and update only supplied fields.
+    assignments = ", ".join(f"{field}=?" for field in changes)
+    with conn:
+        resident = conn.execute(
+            f"UPDATE residents SET {assignments} WHERE unit_id=? AND id=? RETURNING *",
+            (*changes.values(), unit_id, resident_id),
+        ).fetchone()
+        if resident is None:
+            raise HTTPException(404, "resident not found for this unit")
+        return dict(resident)
 
 
 @router.get("/units/{unit_id}/cases")

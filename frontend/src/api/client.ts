@@ -9,6 +9,9 @@ import type {
   MaintenanceCase,
   PartnerCommand,
   PartnerInboxJob,
+  Resident,
+  ResidentProfileChanges,
+  ResidentProfileDraft,
   SharingApprovalRequest,
   UnitContext,
 } from '../types/domain'
@@ -18,6 +21,30 @@ export const isFixtureMode = !apiBaseUrl
 const demoCases = new Map<string, MaintenanceCase>()
 const demoJobs = new Map<string, PartnerInboxJob>()
 const demoEvents = new Map<string, CaseEvent[]>()
+const demoHome = structuredClone(unitContextFixture)
+const profileFields = ['name', 'email', 'phone', 'preferred_contact'] as const
+
+function fixtureProfileKey(resident: Resident) {
+  return 'centrix:fixture:profile:' + resident.unit_id + ':' + resident.id
+}
+
+if (isFixtureMode) {
+  for (const resident of demoHome.residents) {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(fixtureProfileKey(resident)) ?? '{}')
+      for (const field of profileFields) {
+        if (typeof stored?.[field] === 'string') resident[field] = stored[field]
+      }
+    } catch { /* The in-memory fixture also works when browser storage is unavailable. */ }
+  }
+}
+
+const profileHints: Record<keyof ResidentProfileChanges, string> = {
+  name: 'Enter a name of up to 120 characters.',
+  email: 'Enter an email address, for example lena@example.com.',
+  phone: 'Enter a phone number with 7 to 15 digits, for example +49 151 00000001.',
+  preferred_contact: 'Choose Portal or Email as your preferred contact channel.',
+}
 
 const waitForFixture = async <T>(value: T): Promise<T> => {
   await new Promise((resolve) => window.setTimeout(resolve, 250))
@@ -32,6 +59,11 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   })
   if (!response.ok) {
     const failure = await response.json().catch(() => null)
+    if (init?.method === 'PATCH' && Array.isArray(failure?.detail)) {
+      const hints = failure.detail.map((entry: { loc?: string[] }) =>
+        profileHints[entry.loc?.at(-1) as keyof ResidentProfileChanges]).filter(Boolean)
+      if (hints.length) throw new Error([...new Set(hints)].join(' '))
+    }
     throw new Error(typeof failure?.detail === 'string' ? failure.detail : `API request failed (${response.status})`)
   }
   return response.json() as Promise<T>
@@ -41,11 +73,51 @@ function partnerJobsPath(partnerSlug: string) {
   return '/partners/' + encodeURIComponent(partnerSlug) + '/connector/jobs'
 }
 
+export function profileChanges(resident: Resident, draft: ResidentProfileDraft): ResidentProfileChanges {
+  const changes: ResidentProfileChanges = {}
+  for (const field of ['name', 'email', 'phone'] as const) {
+    const value = draft[field].trim()
+    if (value !== (resident[field] ?? '')) changes[field] = value
+  }
+  const channel = draft.preferred_contact
+  if ((channel === 'portal' || channel === 'email') && channel !== resident.preferred_contact) {
+    changes.preferred_contact = channel
+  }
+  return changes
+}
+
 export const api = {
   getUnitContext: async (unitId: string): Promise<UnitContext> =>
     apiBaseUrl
       ? request<UnitContext>(`/api/units/${unitId}/context`)
-      : waitForFixture(unitContextFixture),
+      : waitForFixture(demoHome),
+
+  async updateResidentProfile(unitId: string, residentId: string, changes: ResidentProfileChanges): Promise<Resident> {
+    if (apiBaseUrl) {
+      return request('/api/units/' + encodeURIComponent(unitId) + '/residents/' + encodeURIComponent(residentId) + '/profile', {
+        method: 'PATCH', body: JSON.stringify({ ...changes, acting_resident_id: residentId }),
+      })
+    }
+    const resident = demoHome.residents.find((item) => item.unit_id === unitId && item.id === residentId)
+    if (!resident) throw new Error('Resident not found for this unit.')
+    const fields = Object.keys(changes)
+    if (!fields.length || fields.some((field) => !Object.hasOwn(profileHints, field))) {
+      throw new Error('Supply only editable profile fields.')
+    }
+    if (changes.phone !== undefined) {
+      const groups = changes.phone.replace(/\(\d+\)/g, '0')
+      const digits = changes.phone.replace(/\D/g, '')
+      if (!/^\+?\d+(?:[ .-]\d+)*$/.test(groups) || digits.length < 7 || digits.length > 15) throw new Error(profileHints.phone)
+    }
+    if (changes.email !== undefined && !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(changes.email)) throw new Error(profileHints.email)
+    if (changes.name !== undefined && !changes.name) throw new Error(profileHints.name)
+    Object.assign(resident, changes)
+    try {
+      sessionStorage.setItem(fixtureProfileKey(resident), JSON.stringify(
+        Object.fromEntries(profileFields.map((field) => [field, resident[field]]))))
+    } catch { /* Keep using this page's resident copy. */ }
+    return waitForFixture(resident)
+  },
 
   extractIntake: (draft: IntakeRequest): Promise<IntakeResponse> => request('/api/intake/extract', {
     method: 'POST', body: JSON.stringify(draft), signal: AbortSignal.timeout(6500),
@@ -197,14 +269,15 @@ async function approveDemoCase(caseId: string, body: SharingApprovalRequest): Pr
   const now = new Date().toISOString()
   const jobId = 'job-' + caseId
   const fields = body.approved_fields
-  const resident = unitContextFixture.residents[0]
-  const property = unitContextFixture.property
+  const resident = demoHome.residents.find((item) => item.unit_id === demoCase.unit_id && item.id === demoCase.resident_id)
+  if (!resident || resident.id !== body.approved_by) throw new Error('Only the reporting resident can approve sharing.')
+  const property = demoHome.property
   demoJobs.set(jobId, {
     id: jobId, request_id: caseId, status: 'received', received_at: now,
     payload: {
       ...partnerJobFixture, request_id: caseId, idempotency_key: caseId + '-heating_repair-v1',
       property: {
-        address: property.address, unit: unitContextFixture.unit.label,
+        address: property.address, unit: demoHome.unit.label,
         ...(fields.includes('heating_type') && { heating_type: property.heating }),
       },
       issue: {

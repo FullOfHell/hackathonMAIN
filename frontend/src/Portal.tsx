@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { VoiceDraft } from './VoiceDraft'
+import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
@@ -10,7 +11,7 @@ import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak,
 import type { IntakeReview } from './intake'
 import type {
   IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerCommand,
-  PartnerInboxJob, RepairInvoiceInput, UnitContext,
+  PartnerInboxJob, RepairInvoiceInput, Resident, ResidentProfileChanges, SharingApprovalRequest, SharingRequest, UnitContext,
 } from './types/domain'
 import './Portal.css'
 
@@ -94,8 +95,7 @@ function ResidentPortal({ active }: { active: boolean }) {
   return <Report home={home.data} active={active} />
 }
 
-function sharingFields(home: UnitContext, current: MaintenanceCase) {
-  const resident = home.residents[0]
+function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Resident) {
   const values: Record<string, { label: string; value: string }> = {
     address: { label: 'Address', value: home.property.address },
     unit: { label: 'Unit', value: home.unit.label },
@@ -124,16 +124,50 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [approved, setApproved] = useState(false)
-  const [sendAttempted, setSendAttempted] = useState(false)
+  const [dispatch, setDispatch] = useState<{
+    fields: ReturnType<typeof sharingFields>
+    request: SharingRequest
+    body: SharingApprovalRequest
+  } | null>(null)
+  const [resident, setResident] = useState(home.residents[0])
+  const [profileSaving, setProfileSaving] = useState(false)
+  const profileSave = useRef<Promise<void> | null>(null)
+  const verifyProfile = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submitting = useRef(false)
   const resolvedQuestions = useRef(new Set<MissingIntakeField>())
-  const resident = home.residents[0]
-  const fields = current ? sharingFields(home, current) : []
-  const request = current?.sharing_request
+  const fields = dispatch?.fields ?? (current ? sharingFields(home, current, resident) : [])
+  const request = current?.sharing_request ?? (current?.status === 'PARTNER_REQUESTED' ? dispatch?.request : undefined)
+  const awaitingConsentReceipt = Boolean(dispatch && !current?.sharing_approval)
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
   const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
+
+  function applyResident(updated: Resident) {
+    const shared = [...(request?.required_fields ?? []), ...selected]
+    const changedConsent = !dispatch && ((shared.includes('name') && updated.name !== resident.name)
+      || (shared.includes('contact') && (updated.email !== resident.email || updated.phone !== resident.phone)))
+    setResident(updated)
+    if (changedConsent) setApproved(false)
+    return changedConsent
+  }
+
+  function saveProfile(changes: ResidentProfileChanges) {
+    if (profileSave.current) return profileSave.current
+    setProfileSaving(true)
+    profileSave.current = api.updateResidentProfile(home.unit_id, resident.id, changes).then((updated) => {
+      applyResident(updated)
+      verifyProfile.current = false
+    }).catch((failure: unknown) => {
+      // A lost PATCH response can follow a successful write. Recheck before granting new consent.
+      verifyProfile.current = true
+      throw failure
+    }).finally(() => {
+      profileSave.current = null
+      setProfileSaving(false)
+    })
+    return profileSave.current
+  }
 
   async function inspectDraft(input: IntakeRequest) {
     if (submitting.current || input.report.length < 3) return
@@ -199,7 +233,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
 
   async function save(event: FormEvent) {
     event.preventDefault()
-    if (submitting.current) return
+    if (submitting.current || (step === 2 && profileSave.current)) return
     if (step === 1 && reviewed && possibleGasLeak([reviewed.description, reviewed.symptoms, reviewed.availability].join('\n'))) {
       setSafety(true)
       return
@@ -218,11 +252,24 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         setCurrent(created)
         setStep(2)
       } else if (current && request && handoffReady && approved) {
-        setSendAttempted(true)
-        const result = await api.approveSharing(current.id, {
-          approved_by: resident.id, channel: 'portal_chat',
-          approved_fields: [...request.required_fields, ...selected],
-        })
+        if (!dispatch && verifyProfile.current) {
+          const context = await api.getUnitContext(home.unit_id).catch(() => null)
+          const latest = context?.residents.find((item) => item.id === resident.id)
+          if (!latest) {
+            setError('Your saved details could not be checked. Please try again.')
+            return
+          }
+          verifyProfile.current = false
+          if (applyResident(latest)) {
+            setError('Your saved details changed. Review them and approve sharing again.')
+            return
+          }
+        }
+        const attempt = dispatch ?? { fields, request, body: {
+          approved_by: resident.id, channel: 'portal_chat' as const, approved_fields: [...request.required_fields, ...selected],
+        } }
+        setDispatch(attempt)
+        const result = await api.approveSharing(current.id, attempt.body)
         setCurrent(result)
         if (!result.partner_job_id) setError('The contractor has not confirmed receipt. Check this case before trying again.')
       }
@@ -232,6 +279,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         if (latest?.partner_job_id || latest?.status === 'NEEDS_HUMAN_REVIEW') {
           setCurrent(latest)
         } else {
+          if (latest?.sharing_approval) setCurrent(latest)
           setError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
         }
       } else {
@@ -247,7 +295,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setFollowUp(''); setSafety(false)
     resolvedQuestions.current.clear()
     setCurrent(null); setSelected([])
-    setApproved(false); setSendAttempted(false); setError(''); setStep(0)
+    setApproved(false); setDispatch(null); setError(''); setStep(0)
   }
 
   const sent = Boolean(current?.partner_job_id)
@@ -342,7 +390,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
             {fields.filter((field) => field.required).map((field) =>
               <div className="field-row" key={field.key}><strong>{field.label || field.key}</strong><span>{field.value || 'Unavailable'}</span></div>)}
           </fieldset>
-          {fields.some((field) => !field.required) && <fieldset disabled={busy || sendAttempted}>
+          {fields.some((field) => !field.required) && <fieldset disabled={busy || profileSaving || Boolean(dispatch)}>
             <legend>Optional details</legend>
             {fields.filter((field) => !field.required).map((field) =>
               <label className="field-row selectable" key={field.key}>
@@ -354,12 +402,12 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
               </label>)}
           </fieldset>}
           <label className="confirmation"><input type="checkbox" checked={approved}
-            disabled={busy || sendAttempted || !handoffReady} onChange={(event) => setApproved(event.target.checked)} />
+            disabled={busy || profileSaving || Boolean(dispatch) || !handoffReady} onChange={(event) => setApproved(event.target.checked)} />
             I approve sharing these details with {request.partner.name}.
           </label>
           {!handoffReady && <p className="error" role="alert">Some required details are unavailable. The report cannot be sent.</p>}
           {error && <p className="error" role="alert">{error}</p>}
-          <button disabled={!approved || busy || !handoffReady}>{busy ? 'Sending…' : error ? 'Retry sending' : 'Approve and send'}</button>
+          <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
         </form> : <div>
           <h2 ref={stepHeading} tabIndex={-1}>{current.status === 'NO_PROVIDER_AVAILABLE' ? 'No repair partner available' : 'Report saved for review'}</h2>
           <p>Case {current.id}. Contractor receipt has not been confirmed.</p>
@@ -379,9 +427,10 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       </section>
       <aside className="panel">
         <h2>Your home</h2>
-        <p className="muted">Already on file</p>
-        <dl className="home-details">
-          <dt>Resident</dt><dd>{resident.name}</dd>
+        <ResidentProfileEditor resident={resident} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
+          onSave={saveProfile} />
+        {awaitingConsentReceipt && !busy && <p className="muted">Retry the handoff to confirm consent before editing your details.</p>}
+        <dl className="home-details property-details">
           <dt>Address</dt><dd>{home.property.address}</dd>
           <dt>Unit</dt><dd>{home.unit.label}</dd>
           <dt>Heating</dt><dd>{home.property.heating}</dd>
