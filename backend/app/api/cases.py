@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 
 from app.db import get_db, now_iso
 from app.integrations.connector import DispatchUnconfirmed, book_slot, build_job_request, dispatch_job, get_partner_client
-from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
-                         DocumentKind, PartnerJobRequest, ResidentAction, ResidentSlotChoice, SharingApprovalIn)
+from app.partners.registry import sharing_policy
+from app.schemas import CaseCreate, DocumentKind, PartnerJobRequest, ResidentAction, ResidentSlotChoice, SharingApprovalIn
 from app.services import cases as svc
 from app.services import outages
 from app.states import CaseStatus, check_transition
@@ -26,8 +26,7 @@ def _case_or_404(conn, case_id):
 def _with_sharing_request(conn, case):
     if case["status"] == CaseStatus.AWAITING_SHARING_APPROVAL.value and case["partner_id"]:
         p = conn.execute("SELECT id, name FROM partners WHERE id=?", (case["partner_id"],)).fetchone()
-        case["sharing_request"] = {"partner": dict(p), "proposed_fields": DEFAULT_PROPOSED_FIELDS,
-                                   "required_fields": REQUIRED_SHARED_FIELDS, "shareable_fields": SHAREABLE_FIELDS}
+        case["sharing_request"] = {"partner": dict(p), **sharing_policy(conn, case["partner_id"])}
     return case
 
 
@@ -141,10 +140,6 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     case = _case_or_404(conn, case_id)
     if body.approved_by != case["resident_id"]:
         raise HTTPException(403, "only the reporting resident can approve sharing")
-    unknown = set(body.approved_fields) - set(SHAREABLE_FIELDS)
-    missing = set(REQUIRED_SHARED_FIELDS) - set(body.approved_fields)
-    if unknown or missing:
-        raise HTTPException(422, {"unknown_fields": sorted(unknown), "missing_required_fields": sorted(missing)})
     fields = sorted(set(body.approved_fields))
     if case["sharing_approval"] and fields != sorted(set(case["sharing_approval"]["shared_fields"])):
         raise HTTPException(409, "sharing approval already records a different set of fields")
@@ -160,6 +155,11 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     if not case["sharing_approval"]:
         if case["status"] == CaseStatus.LINKED_TO_BUILDING_REPAIR:
             raise HTTPException(409, "this report follows a building repair; no additional sharing is needed")
+        policy = sharing_policy(conn, case["partner_id"])
+        unknown = set(fields) - set(policy["shareable_fields"])
+        missing = set(policy["required_fields"]) - set(fields)
+        if unknown or missing:
+            raise HTTPException(422, {"unknown_fields": sorted(unknown), "missing_required_fields": sorted(missing)})
         svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
                        {"partner_id": case["partner_id"]})
         outages.claim_dispatch(conn, case_id, case["building_repair"])

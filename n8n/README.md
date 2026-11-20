@@ -1,4 +1,14 @@
-# Sharing approval workflow
+# Connector dispatch workflows
+
+## Provider-neutral workflow
+
+Import [connector-dispatch.json](connector-dispatch.json) once. **Sharing approved** uses the `X-N8N-Webhook-Secret` Header Auth credential. In **Dispatch stored order**, configure a fixed HTTPS URL ending in `/api/integrations/approved-dispatch` and attach a separate Header Auth credential named `X-Connector-Dispatch-Secret` in the header field. For a local Cloud demo, point the tunnel or proxy at this backend route and expose only this `POST` path on that origin. [n8n import guide](https://docs.n8n.io/build/manage-workflows/export-and-import/)
+
+Publish the workflow. Set its Production URL in `N8N_CONNECTOR_WEBHOOK_URL`, the inbound credential value in `N8N_WEBHOOK_SECRET`, and the outbound credential value in `CONNECTOR_DISPATCH_SECRET` in `backend/.env`, then restart FastAPI. The generic URL takes precedence over the legacy URL.
+
+FastAPI sends `event: maintenance.sharing_approved` and `case_id`. The workflow sends only `case_id` to the fixed gateway. The gateway looks up the saved approval, order, and selected provider, then calls that provider's connector and returns `case_id`, `job_id`, and `duplicate`. Registering another delivery provider needs no edits to the workflow. See [the connector spec](../Docs/connector-spec.md#adding-a-delivery-provider).
+
+## Legacy HeatFix-only workflow
 
 ## Set up n8n Cloud
 
