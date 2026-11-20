@@ -140,3 +140,7 @@ input { accent-color: #942f1d; }
 .manager-contractor-fields input { min-width: 0; border: 1px solid #bc9e8c; border-radius: .5rem; padding: .5rem; }
 .manager-contractors form p { margin: .5rem 0 .75rem; font-size: .85rem; }
 .manager-contractors form fieldset { margin-bottom: 0; }
+
+.manager-repair-group + .manager-repair-group { margin-top: 1rem; }
+.manager-repair-group > h3 { margin: 0 .15rem; color: #693323; font-size: 1.15rem; }
+.manager-repair-group h4 { margin: 0; font-size: 1rem; }
