@@ -51,6 +51,8 @@ Use short excerpts from the report for symptoms and availability. FastAPI verifi
 
 ## Typed portal flow
 
+Optional voice dictation feeds the same draft. `GET /api/intake/transcription` reports whether a server-side key and transcription model are configured. `POST /api/intake/transcription` takes an explicitly submitted WebM, Ogg, or MP4 audio body up to 4 MiB and returns `{"text": "..."}`. The portal stops recording after 30 seconds. Review and add the transcript before using the normal intake and sharing steps.
+
 - **Describe.** Preserve the resident’s own words. If the issue is unclear, ask “What is happening with your heating?” Ask “Is hot water also affected?” only if the answer is unknown and relevant. Availability is optional. If it is useful to ask, use “When are you usually home for a repair visit?” Show at most one follow-up at a time, let residents skip optional questions, and avoid asking again after an answer or skip during the same draft.
 - **Review.** Show the original report, editable symptoms and availability, and editable urgency. The resident’s final values are authoritative. Build the existing `POST /api/cases` request with `description`, `symptoms`, `availability_preferences`, and `urgency`, plus `unit_id` and `resident_id` from the existing context, `issue_type: "heating_repair"`, and `source_channel: "portal_chat"`. Keep description within the existing 3–2,000-character limit, including any appended notes.
 - **Approve.** Use the existing sharing preview and explicit approval before sending the case to HeatFix. Display case, job, booking, and repair progress only from saved backend responses. Model output cannot set identity, sharing approval, provider, case status, appointments, completion, or invoice data.

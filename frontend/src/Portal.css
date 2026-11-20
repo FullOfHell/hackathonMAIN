@@ -59,6 +59,8 @@ input { accent-color: #942f1d; }
 .appointment p { margin: .3rem 0 0; }
 .repair-outcome { border-top: 1px solid #ecdcd0; padding-block: 1rem; margin-top: .8rem; }
 .repair-outcome .button { display: inline-block; }
+.voice-draft { border-top: 1px solid #ecdcd0; margin-block: 1rem; padding-top: .75rem; }
+.voice-draft p { margin-bottom: .5rem; font-size: .9rem; }
 .job > section { margin-top: 1rem; }
 
 @media (max-width: 680px) {
