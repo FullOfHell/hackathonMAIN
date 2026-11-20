@@ -10,6 +10,7 @@
   "status": "AWAITING_SHARING_APPROVAL",
   "partner_id": "p_heatfix",
   "partner_job_id": null,
+  "building_repair": null,
   "slots": [],
   "appointment": null,
   "completion_report": null,

@@ -7,6 +7,8 @@ export type CaseStatus =
   | 'SCHEDULED'
   | 'IN_PROGRESS'
   | 'COMPLETED'
+  | 'AWAITING_INVOICE_APPROVAL'
+  | 'LINKED_TO_BUILDING_REPAIR'
   | 'CLOSED'
   | 'DECLINED'
   | 'NO_PROVIDER_AVAILABLE'
@@ -125,6 +127,14 @@ export interface MaintenanceCase extends CreateCaseRequest {
   status: CaseStatus
   partner_id: string | null
   partner_job_id: string | null
+  building_repair: {
+    outage_id: string
+    is_dispatch_case: boolean
+    repair_status: CaseStatus | null
+    partner_job_id: string | null
+    scope_confirmed: boolean
+    appointment: Pick<AppointmentSlot, 'start' | 'end'> | null
+  } | null
   created_at: string
   updated_at: string
   sharing_approval: SharingApproval | null
@@ -146,7 +156,14 @@ export interface PartnerJob {
   idempotency_key: string
   service_type: 'heating_repair'
   property: Record<string, string>
-  issue: { description: string; symptoms: string[]; priority: Urgency; availability_preferences: string[] }
+  issue: {
+    description: string
+    symptoms: string[]
+    priority: Urgency
+    availability_preferences: string[]
+    repair_scope?: 'building_heating'
+    previous_record?: { source_case_id?: string; date: string; description: string; note: string }
+  }
   resident: {
     name?: string
     contact?: { email: string; phone: string }

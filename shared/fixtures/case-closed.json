@@ -1,5 +1,6 @@
 {
   "id": "case_001",
+  "building_repair": null,
   "unit_id": "unit_4b",
   "resident_id": "c_202",
   "issue_type": "heating_repair",

@@ -21,8 +21,6 @@
      "phone": "+49 151 00000001", "preferred_contact": "email", "move_in": "2024-08-15"}
   ],
   "partners": [
-    {"id": "p_heatfix", "name": "HeatFix Aachen GmbH", "service_types": ["heating_repair"],
-     "regions": ["Aachen"], "base_url": "/partners/heatfix", "active": true},
     {"id": "p_warmwerk", "name": "WarmWerk Service Köln", "service_types": ["heating_repair"],
      "regions": ["Köln"], "base_url": "/partners/warmwerk", "active": true}
   ],

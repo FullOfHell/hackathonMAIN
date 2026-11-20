@@ -17,7 +17,9 @@ The official requirements are in `Docs/Reltix-Track-Description.pdf`. The implem
 ## Non-negotiable product decisions
 
 - One P0 service: heating repair.
-- Typed resident portal is the baseline; voice is optional until the typed flow works.
+- Resident channels: the portal (P0) and a simulated text-message outbox with one-click links (P1). No voice agent: Reltix already has one (see `Docs/mentor-feedback.md`).
+- centrix approves repair costs up to €3,000; invoices above that are flagged for manager approval, never silently closed.
+- The connector must let Reltix add a new partner category (e.g. internet) without changing case-domain logic.
 - FastAPI and SQLite are the source of truth for domain state.
 - The LLM may extract and explain information, but it may not invent diagnoses, appointments, partner acceptance, completion, or invoice state.
 - Every status transition is validated and persisted with timestamp and actor.
@@ -31,7 +33,7 @@ The official requirements are in `Docs/Reltix-Track-Description.pdf`. The implem
 1. Repeatable end-to-end demo and resident experience.
 2. Realistic persistence, consent, partner workflow, and failure handling.
 3. Reusable connector contract.
-4. Voice, multi-provider routing, and visual polish.
+4. Differentiators in this order: building-wide outage detection, text-message channel, €3,000 cost warning, internet partner via the connector, visual polish.
 
 Do not trade a working P0 flow for a broader but incomplete feature set.
 

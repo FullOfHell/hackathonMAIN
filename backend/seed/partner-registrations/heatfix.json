@@ -1,0 +1,11 @@
+{
+  "name": "HeatFix Aachen GmbH",
+  "base_url": "/partners/heatfix",
+  "capabilities": {
+    "schema_version": "1.0", "partner_id": "p_heatfix", "kind": "delivery",
+    "categories": ["heating_repair"], "regions": ["Aachen"], "triggers": ["maintenance.case_created"],
+    "required_fields": ["address", "unit", "issue"],
+    "optional_fields": ["heating_type", "access_details", "name", "contact", "previous_record"],
+    "events": ["accepted", "rejected", "slots_offered", "in_progress", "completed", "invoice_ready", "failed"]
+  }
+}

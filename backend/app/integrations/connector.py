@@ -36,10 +36,14 @@ def build_job_request(case: dict, ctx: dict, resident: dict, approval: dict) -> 
         prop["access_details"] = ctx["property"]["access_details"]
     issue = {"description": case["description"], "symptoms": case["symptoms"], "priority": case["urgency"],
              "availability_preferences": case["availability_preferences"]}
+    if case.get("building_repair"):
+        issue["repair_scope"] = "building_heating"
     if "prior_heating_case" in fields:
-        prior = [p for p in ctx["prior_heating_cases"] if p["id"] != case["id"]]
+        prior = [p for p in ctx["prior_heating_cases"] if p["id"] != case["id"]
+                 and p["status"] == "CLOSED" and p["created_at"] <= case["created_at"]]
         if prior:
-            issue["previous_record"] = {"date": prior[0]["created_at"], "description": prior[0]["description"],
+            issue["previous_record"] = {"source_case_id": prior[0]["id"],
+                                        "date": prior[0]["created_at"], "description": prior[0]["description"],
                                         "note": "Context only; current fault not diagnosed."}
     res = {}
     if "name" in fields:

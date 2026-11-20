@@ -1,0 +1,10 @@
+{
+  "name": "FibreNet Aachen",
+  "base_url": "/partners/fibrenet",
+  "capabilities": {
+    "schema_version": "1.0", "partner_id": "p_fibrenet", "kind": "offer",
+    "categories": ["internet"], "regions": ["Aachen"], "triggers": ["tenant.move_in"],
+    "required_fields": ["address", "unit", "move_in_date"], "optional_fields": ["name", "contact"],
+    "events": ["offer_created", "contract_signed", "activation_scheduled", "failed"]
+  }
+}
