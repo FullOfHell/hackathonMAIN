@@ -93,6 +93,8 @@ Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLi
 
 For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI. If ElevenLabs needs to reach the backend, configure its reachable HTTPS origin in `PUBLIC_BACKEND_URL`.
 
+The [structured intake endpoint](Docs/structured-intake-contract.md) uses deterministic extraction by default. Set `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` in `backend/.env` to enable model suggestions.
+
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Three-person workflow

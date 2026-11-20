@@ -3,6 +3,8 @@ import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
 import type {
   CaseEvent,
   CreateCaseRequest,
+  IntakeRequest,
+  IntakeResponse,
   MaintenanceCase,
   PartnerAction,
   PartnerInboxJob,
@@ -38,6 +40,10 @@ export const api = {
     apiBaseUrl
       ? request<UnitContext>(`/api/units/${unitId}/context`)
       : waitForFixture(unitContextFixture),
+
+  extractIntake: (draft: IntakeRequest): Promise<IntakeResponse> => request('/api/intake/extract', {
+    method: 'POST', body: JSON.stringify(draft), signal: AbortSignal.timeout(6500),
+  }),
 
   createCase: async (body: CreateCaseRequest): Promise<MaintenanceCase> =>
     apiBaseUrl

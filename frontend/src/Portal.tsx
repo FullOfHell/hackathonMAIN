@@ -3,7 +3,9 @@ import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { CaseProgress, CaseTimeline } from './CaseViews'
 import { formatTime, slotLabel, statusLabel } from './caseDisplay'
-import type { MaintenanceCase, PartnerAction, PartnerInboxJob, UnitContext } from './types/domain'
+import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
+import type { IntakeReview } from './intake'
+import type { IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerInboxJob, UnitContext } from './types/domain'
 import './Portal.css'
 
 const shortcuts = ['No heat at all', 'Radiators are lukewarm', 'Some radiators are cold']
@@ -97,8 +99,11 @@ function sharingFields(home: UnitContext, current: MaintenanceCase) {
 function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [step, setStep] = useState(0)
   const [issue, setIssue] = useState('')
-  const [hotWater, setHotWater] = useState('')
-  const [summary, setSummary] = useState('')
+  const [hotWater, setHotWater] = useState<boolean | null>(null)
+  const [question, setQuestion] = useState<MissingIntakeField | null>(null)
+  const [followUp, setFollowUp] = useState('')
+  const [reviewed, setReviewed] = useState<IntakeReview | null>(null)
+  const [safety, setSafety] = useState(false)
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [approved, setApproved] = useState(false)
@@ -106,30 +111,89 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submitting = useRef(false)
+  const resolvedQuestions = useRef(new Set<MissingIntakeField>())
   const resident = home.residents[0]
   const fields = current ? sharingFields(home, current) : []
   const request = current?.sharing_request
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
 
+  async function inspectDraft(input: IntakeRequest) {
+    if (submitting.current || input.report.length < 3) return
+    setError('')
+    setQuestion(null)
+    if (possibleGasLeak(input.report)) {
+      setSafety(true)
+      return
+    }
+    if (reviewed?.input.report === input.report && reviewed.input.hot_water_affected === input.hot_water_affected) {
+      setStep(1)
+      return
+    }
+
+    submitting.current = true
+    setBusy(true)
+    try {
+      const extraction = isFixtureMode ? null : await api.extractIntake(input).catch(() => null)
+      const result = extraction?.result
+      if (result?.safety_signal === 'possible_gas_leak') {
+        setSafety(true)
+        return
+      }
+      const next = result?.missing_information.find((field) => {
+        if (resolvedQuestions.current.has(field)) return false
+        if (field === 'hot_water_affected') return true
+        if (field === 'availability_preferences' && result.missing_information.includes('heating_symptom')) return false
+        const prefixLength = field === 'availability_preferences' ? availabilityPrefix.length : 0
+        return input.report.length + prefixLength + 2 <= reportLimit
+      })
+      if (next) {
+        setQuestion(next)
+        return
+      }
+      setReviewed(makeIntakeReview(input, result))
+      setStep(1)
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
+  }
+
+  function answerQuestion(answer: string | boolean | null) {
+    if (!question || submitting.current) return
+    resolvedQuestions.current.add(question)
+    const prefix = question === 'availability_preferences' ? availabilityPrefix : ''
+    const report = typeof answer === 'string' ? `${issue.trim()}\n${prefix}${answer.trim()}` : issue.trim()
+    const hotWaterAnswer = typeof answer === 'boolean' ? answer : hotWater
+    setIssue(report)
+    setHotWater(hotWaterAnswer)
+    setFollowUp('')
+    void inspectDraft({ report, hot_water_affected: hotWaterAnswer })
+  }
+
   function review(event: FormEvent) {
     event.preventDefault()
-    const note = hotWater === 'yes' ? '\nHot water is also affected.'
-      : hotWater === 'no' ? '\nHot water still works.' : ''
-    setSummary(issue.trim() + note)
-    setStep(1)
+    if (safety) return
+    if (question && followUp.trim()) answerQuestion(followUp)
+    else if (!question) void inspectDraft({ report: issue.trim(), hot_water_affected: hotWater })
   }
 
   async function save(event: FormEvent) {
     event.preventDefault()
     if (submitting.current) return
+    if (step === 1 && reviewed && possibleGasLeak([reviewed.description, reviewed.symptoms, reviewed.availability].join('\n'))) {
+      setSafety(true)
+      return
+    }
     submitting.current = true
     setBusy(true)
     setError('')
     try {
-      if (step === 1) {
+      if (step === 1 && reviewed) {
         const created = await api.createCase({
           unit_id: home.unit_id, resident_id: resident.id, issue_type: 'heating_repair',
-          description: summary.trim(), source_channel: 'portal_chat', symptoms: [], urgency: 'normal',
+          description: reviewed.description.trim(), source_channel: 'portal_chat',
+          symptoms: reviewSymptoms(reviewed.symptoms), availability_preferences: reviewEntries(reviewed.availability),
+          urgency: reviewed.urgency || 'normal',
         })
         setCurrent(created)
         setStep(2)
@@ -160,7 +224,9 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   }
 
   function reset() {
-    setIssue(''); setHotWater(''); setSummary(''); setCurrent(null); setSelected([])
+    setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setFollowUp(''); setSafety(false)
+    resolvedQuestions.current.clear()
+    setCurrent(null); setSelected([])
     setApproved(false); setSendAttempted(false); setError(''); setStep(0)
   }
 
@@ -177,33 +243,62 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           {steps.map((label, index) => <li key={label} aria-current={step === index ? 'step' : undefined}>{label}</li>)}
         </ol>}
         {step === 0 && <form onSubmit={review}>
-          <label htmlFor="report"><strong>What’s happening with your heating?</strong></label>
-          <textarea id="report" value={issue} onChange={(event) => setIssue(event.target.value)}
-            placeholder="For example, my radiators have been cold since last night." rows={4} maxLength={1950} />
-          <div className="shortcuts" aria-label="Report suggestions">
-            {shortcuts.map((text) => <button key={text} type="button" className="secondary chip"
-              onClick={() => setIssue((value) => value.trim() ? value.trim() + '\n' + text : text)}
-              disabled={issue.trim().length + text.length + 1 > 1950}>{text}</button>)}
-          </div>
-          <fieldset>
-            <legend>Is hot water also affected? <span className="muted">(optional)</span></legend>
-            <div className="radio-group">
-              {[['yes', 'Yes'], ['no', 'No'], ['', 'Not sure']].map(([value, label]) =>
-                <label key={label}><input type="radio" name="hot-water" value={value}
-                  checked={hotWater === value} onChange={() => setHotWater(value)} /> {label}</label>)}
+          {question === 'hot_water_affected' ? <fieldset disabled={busy}>
+            <legend>{intakeQuestions[question]}</legend>
+            <div className="actions">
+              <button type="button" onClick={() => answerQuestion(true)}>Yes</button>
+              <button type="button" onClick={() => answerQuestion(false)}>No</button>
+              <button type="button" className="secondary" onClick={() => answerQuestion(null)}>Skip</button>
             </div>
-          </fieldset>
-          <button disabled={issue.trim().length < 3}>Review summary</button>
+          </fieldset> : question ? <>
+            <label htmlFor="intake-follow-up"><strong>{intakeQuestions[question]}</strong></label>
+            <textarea id="intake-follow-up" value={followUp} onChange={(event) => setFollowUp(event.target.value)} rows={3}
+              maxLength={reportLimit - issue.trim().length - 1 - (question === 'availability_preferences' ? availabilityPrefix.length : 0)} disabled={busy} />
+            <div className="actions">
+              <button disabled={busy || !followUp.trim()}>Continue</button>
+              {question === 'availability_preferences' && <button type="button" className="secondary"
+                onClick={() => answerQuestion(null)}>Skip</button>}
+            </div>
+          </> : <>
+            <label htmlFor="report"><strong>What’s happening with your heating?</strong></label>
+            <textarea id="report" value={issue} onChange={(event) => { setIssue(event.target.value); setSafety(false) }}
+              placeholder="For example, my radiators have been cold since last night." rows={4} maxLength={reportLimit} disabled={busy} />
+            <div className="shortcuts" aria-label="Report suggestions">
+              {shortcuts.map((text) => <button key={text} type="button" className="secondary chip"
+                onClick={() => { setIssue((value) => value.trim() ? value.trim() + '\n' + text : text); setSafety(false) }}
+                disabled={busy || issue.trim().length + text.length + 1 > reportLimit}>{text}</button>)}
+            </div>
+            <div className="actions"><button disabled={busy || safety || issue.trim().length < 3}>
+              {busy ? 'Checking report…' : 'Review summary'}
+            </button></div>
+          </>}
+          {question && <div className="actions"><button type="button" className="secondary" onClick={() => {
+            setQuestion(null); setFollowUp('')
+          }}>Edit report</button></div>}
+          {safety && <p className="error" role="alert">{safetyMessage}</p>}
         </form>}
-        {step === 1 && <form onSubmit={save}>
+        {step === 1 && reviewed && <form onSubmit={save}>
           <h2 ref={stepHeading} tabIndex={-1}>Review your report</h2>
           <label htmlFor="summary">Issue summary</label>
-          <textarea id="summary" value={summary} rows={5} maxLength={2000}
-            onChange={(event) => setSummary(event.target.value)} disabled={busy} />
+          <textarea id="summary" value={reviewed.description} rows={5} maxLength={2000}
+            onChange={(event) => { setReviewed({ ...reviewed, description: event.target.value }); setSafety(false) }} disabled={busy} />
+          <label htmlFor="symptoms">Symptoms (one per line)</label>
+          <textarea id="symptoms" value={reviewed.symptoms} rows={3}
+            onChange={(event) => { setReviewed({ ...reviewed, symptoms: event.target.value }); setSafety(false) }} disabled={busy} />
+          <label htmlFor="availability">Availability (optional, one preference per line)</label>
+          <textarea id="availability" value={reviewed.availability} rows={2}
+            onChange={(event) => { setReviewed({ ...reviewed, availability: event.target.value }); setSafety(false) }} disabled={busy} />
+          <label htmlFor="urgency">Priority </label>
+          <select id="urgency" value={reviewed.urgency} disabled={busy} onChange={(event) =>
+            setReviewed({ ...reviewed, urgency: event.target.value as IntakeReview['urgency'] })}>
+            <option value="">Normal (default)</option><option value="low">Low</option>
+            <option value="normal">Normal</option><option value="high">High</option>
+          </select>
+          {safety && <p className="error" role="alert">{safetyMessage}</p>}
           {error && <p className="error" role="alert">{error}</p>}
           <div className="actions">
-            <button type="button" className="secondary" disabled={busy} onClick={() => { setError(''); setStep(0) }}>Back</button>
-            <button disabled={busy || summary.trim().length < 3}>{busy ? 'Saving…' : 'Continue to sharing'}</button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back</button>
+            <button disabled={busy || safety || reviewed.description.trim().length < 3}>{busy ? 'Saving…' : 'Continue to sharing'}</button>
           </div>
         </form>}
         {step === 2 && current && !sent && (request ? <form onSubmit={save}>

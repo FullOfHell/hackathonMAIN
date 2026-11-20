@@ -1,0 +1,5 @@
+{
+  "possible_gas_leak": "\\b(?:gas\\s+(?:(?:is\\s+|may\\s+be\\s+)?leak(?:s|ing)?|smell|odou?r)|smell(?:s|ed|ing)?\\s+(?:of\\s+|like\\s+)?(?:natural\\s+)?gas|odou?r\\s+of\\s+(?:natural\\s+)?gas|(?:smell|odou?r)\\s+(?:of\\s+|like\\s+)?rotten\\s+eggs)\\b",
+  "negation_prefix": "\\b(?:no|not|never|without|don['’]t|doesn['’]t|didn['’]t|do not|does not|cannot|can['’]t)\\s+(?:(?:a|an|any|signs? of)\\s+)*$",
+  "message": "If you suspect a gas leak, move to a safe place and contact local emergency services."
+}
