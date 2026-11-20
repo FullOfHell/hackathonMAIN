@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -109,9 +110,10 @@ def test_bad_secret_changes_nothing(client, approved, headers):
     assert client.post(CALLBACK, json=body, headers=HEADER).json()["duplicate"] is False
 
 
-def test_dev_secret_when_unset(client, approved, monkeypatch):
+def test_local_partner_callbacks_work_without_a_configured_secret(client, approved, monkeypatch):
     monkeypatch.delenv("PARTNER_WEBHOOK_SECRET")
-    assert client.post(CALLBACK, json=event(approved), headers={"X-Partner-Secret": "dev-partner-secret"}).status_code == 200
+    assert client.post(CALLBACK, json=event(approved), headers={"X-Partner-Secret": "dev-partner-secret"}).status_code == 401
+    assert client.post(job_url(approved) + "/accept").status_code == 200
 
 
 @pytest.mark.parametrize(("change", "expected"), [
@@ -135,7 +137,7 @@ def test_rejection_declines_case_and_invalid_transition_rolls_back(client, appro
     case = client.get(case_url(approved)).json()
     assert (case["status"], case["slots"], case["appointment"]) == ("DECLINED", [], None)
     assert client.get(case_url(approved) + "/events").json() == timeline
-    with connect() as conn:
+    with closing(connect()) as conn:
         assert conn.execute("SELECT COUNT(*) FROM processed_partner_events").fetchone()[0] == 1
 
 
@@ -188,6 +190,19 @@ def test_lost_booking_reply_reconciles_on_retry(client, offered):
     assert select(client, offered, slot_id).json()["status"] == "SCHEDULED"
 
 
+def test_unconfirmed_callback_stays_pending_until_matching_receipt(client, approved):
+    url = job_url(approved)
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(
+        200, json={"event_id": "different_event", "duplicate": False}
+    ))) as wrong:
+        app.dependency_overrides[get_callback_client] = lambda: wrong
+        assert client.post(url + "/accept").status_code == 502
+        assert client.post(url + "/offer-slots").status_code == 409
+    app.dependency_overrides[get_callback_client] = lambda: client
+    assert client.post(url + "/accept").status_code == 200
+    assert sum(e["type"] == "partner.accepted" for e in client.get(case_url(approved) + "/events").json()) == 1
+
+
 def test_wrong_booking_confirmation_does_not_schedule(client, offered):
     slot_id = offered["slots"][0]["slot_id"]
     wrong = {"job_id": "wrong_job", "slot_id": slot_id, "status": "scheduled"}
@@ -229,10 +244,117 @@ def test_concurrent_selections_make_one_appointment(client, offered, same_slot):
 
 
 def test_existing_database_and_old_case_request_default_to_empty_preferences(client):
-    with connect() as conn:
+    with closing(connect()) as conn, conn:
         conn.execute("ALTER TABLE cases DROP COLUMN availability_preferences")
     init_db()
     assert client.get("/api/cases/case_000").json()["availability_preferences"] == []
     old_request = load("case-create.json")
     del old_request["availability_preferences"]
     assert client.post("/api/cases", json=old_request).json()["availability_preferences"] == []
+
+
+@pytest.fixture
+def scheduled(client, offered):
+    response = select(client, offered, offered["slots"][0]["slot_id"])
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_repair_closes_on_the_original_unit_and_survives_restart(client, scheduled):
+    other = client.post("/api/cases", json=load("case-create.json") | {
+        "unit_id": "unit_2a", "resident_id": "c_203"}).json()
+    start, complete, invoice = load("partner-repair-events.json")
+    url = job_url(scheduled)
+    assert client.post(url + "/start").json()["status"] == start["type"]
+    assert client.get(case_url(scheduled)).json()["status"] == "IN_PROGRESS"
+    assert client.post(url + "/complete", json=complete["data"]).json()["status"] == complete["type"]
+    completed = client.get(case_url(scheduled)).json()
+    assert completed["status"] == "COMPLETED"
+    assert completed["completion_report"]["summary"] == complete["data"]["summary"]
+    assert completed["invoice"] is None
+
+    # Two deliveries from the partner dashboard must produce one invoice and one closure.
+    with ThreadPoolExecutor(2) as pool:
+        replies = [pool.submit(client.post, url + "/invoice", json=invoice["data"]) for _ in range(2)]
+        assert [r.result().status_code for r in replies] == [200, 200]
+    closed = client.get(case_url(scheduled)).json()
+    example = load("case-closed.json")
+    assert set(closed) == set(example)
+    assert closed["status"] == example["status"] == "CLOSED"
+    assert closed["appointment"] == scheduled["appointment"]
+    for kind, data in [("completion_report", complete["data"]), ("invoice", invoice["data"])]:
+        doc = closed[kind]
+        assert set(doc) == set(example[kind])
+        assert {key: doc[key] for key in data} == data
+        assert (doc["case_id"], doc["unit_id"]) == (closed["id"], closed["unit_id"])
+        downloaded = client.get(doc["url"])
+        assert downloaded.json() == doc and doc["filename"] in downloaded.headers["Content-Disposition"]
+        assert client.get(case_url(other) + "/documents/" + kind).status_code == 404
+
+    timeline = client.get(case_url(closed) + "/events").json()
+    assert [e["payload"]["to"] for e in timeline if e["type"] == "case.status_changed"] == [
+        "TRIAGED", "AWAITING_SHARING_APPROVAL", "PARTNER_REQUESTED", "SLOTS_OFFERED", "SCHEDULED",
+        "IN_PROGRESS", "COMPLETED", "CLOSED"]
+    assert timeline[0]["type"] == "maintenance.case_created"
+    assert all(e["case_id"] == closed["id"] and e["actor"] and e["timestamp"] for e in timeline)
+    assert all(e["actor"] == "partner:p_heatfix" and e["payload"]["job_id"] == closed["partner_job_id"]
+               for e in timeline[-3:])
+    assert client.post(url + "/invoice", json=invoice["data"] | {"amount_cents": 1}).status_code == 409
+    with TestClient(app) as restarted:
+        assert restarted.get(case_url(closed)).json() == closed
+        assert restarted.get(case_url(closed) + "/events").json() == timeline
+        unit_cases = restarted.get("/api/units/unit_4b/cases").json()
+        assert closed in unit_cases and other not in unit_cases
+        assert restarted.get("/api/units/unit_2a/cases").json()[0]["id"] == other["id"]
+        assert restarted.get(closed["invoice"]["url"]).json() == closed["invoice"]
+        assert restarted.get(url).json()["status"] == "invoice_ready"
+
+
+def test_document_callbacks_require_order_and_matching_replays(client, scheduled):
+    events = [e | {"request_id": scheduled["id"], "job_id": scheduled["partner_job_id"]}
+              for e in load("partner-repair-events.json")]
+    start, complete, invoice = events
+
+    def deliver(body):
+        return client.post(CALLBACK, json=body, headers=HEADER)
+
+    assert deliver(complete).status_code == 409
+    assert deliver(invoice).status_code == 409
+    assert deliver(complete | {"data": {"summary": " "}}).status_code == 422
+    assert deliver(invoice | {"data": invoice["data"] | {"amount_cents": -1}}).status_code == 422
+    assert deliver(invoice | {"data": invoice["data"] | {"currency": "USD"}}).status_code == 422
+    assert client.get(case_url(scheduled)).json() == scheduled
+    for body in events:
+        assert deliver(body).json() == {"event_id": body["event_id"], "duplicate": False}
+    closed = client.get(case_url(scheduled)).json()
+    history = client.get(case_url(closed) + "/events").json()
+    # Receipts from the earlier schema can recover invoice and report contents from the documents.
+    with closing(connect()) as conn, conn:
+        conn.execute("ALTER TABLE processed_partner_events DROP COLUMN event_data")
+    init_db()
+    assert deliver(invoice | {"data": invoice["data"] | {"amount_cents": 1}}).status_code == 409
+    assert deliver(complete | {"event_id": invoice["event_id"]}).status_code == 409
+    assert deliver(event(closed, type="accepted", data={})).status_code == 409
+    for body in (invoice, complete, start):
+        assert deliver(body).json() == {"event_id": body["event_id"], "duplicate": True}
+    assert client.get(case_url(closed)).json() == closed
+    assert client.get(case_url(closed) + "/events").json() == history
+
+
+def test_failed_job_escalates_once_and_cannot_be_booked(client, offered):
+    url = job_url(offered)
+    assert client.post(case_url(offered) + "/escalate").status_code == 409
+    failure = load("partner-failed.json")["data"]
+    assert client.post(url + "/fail", json=failure).json()["status"] == "failed"
+    assert client.post(url + "/fail", json=failure).status_code == 200
+    failed = client.get(case_url(offered)).json()
+    assert failed["status"] == "FAILED" and failed["appointment"] is None
+    assert client.get(case_url(failed) + "/events").json()[-1]["payload"]["reason"] == failure["reason"]
+    slot = {"slot_id": offered["slots"][0]["slot_id"]}
+    assert client.post(url + "/book", json=slot).status_code == 409
+    assert select(client, failed, slot["slot_id"]).status_code == 409
+    assert client.post(case_url(failed) + "/escalate").json()["status"] == "NEEDS_HUMAN_REVIEW"
+    history = client.get(case_url(failed) + "/events").json()
+    assert history[-1]["actor"] == "manager"
+    assert client.post(case_url(failed) + "/escalate").status_code == 200
+    assert client.get(case_url(failed) + "/events").json() == history

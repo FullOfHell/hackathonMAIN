@@ -47,8 +47,12 @@ class SlotChoice(BaseModel):
     slot_id: str = Field(min_length=1)
 
 
-class ResidentSlotChoice(SlotChoice):
+class ResidentAction(BaseModel):
     resident_id: str
+
+
+class ResidentSlotChoice(SlotChoice, ResidentAction):
+    pass
 
 
 class AppointmentSlot(SlotChoice):
@@ -85,6 +89,16 @@ class PartnerDecision(CallbackEnvelope):
     data: dict = Field(default_factory=dict)
 
 
+class FailureReason(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PartnerFailed(CallbackEnvelope):
+    type: Literal["failed"]
+    data: FailureReason
+
+
 class SlotsOffered(CallbackEnvelope):
     type: Literal["slots_offered"]
     data: SlotOffer
@@ -116,4 +130,6 @@ class InvoiceReady(CallbackEnvelope):
     data: RepairInvoice
 
 
-PartnerEvent = Annotated[PartnerDecision | SlotsOffered | RepairCompleted | InvoiceReady, Field(discriminator="type")]
+PartnerEvent = Annotated[
+    PartnerDecision | PartnerFailed | SlotsOffered | RepairCompleted | InvoiceReady, Field(discriminator="type")
+]

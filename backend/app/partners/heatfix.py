@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
-from app.schemas import PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
+from app.schemas import FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
 
 PARTNER_ID = "p_heatfix"
 router = APIRouter(prefix="/partners/heatfix", tags=["mock partner: HeatFix"])
@@ -21,6 +21,7 @@ ALLOWED_JOB_ACTIONS = {
     "in_progress": {"scheduled"},
     "completed": {"in_progress"},
     "invoice_ready": {"completed"},
+    "failed": {"received", "accepted", "slots_offered", "scheduled", "in_progress"},
 }
 
 
@@ -46,8 +47,10 @@ def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db))
                             (job_id, PARTNER_ID, job.idempotency_key, job.request_id, job.model_dump_json(),
                              "received", now_iso()))
     if not inserted.rowcount:
-        existing = conn.execute("SELECT id, status FROM partner_jobs WHERE idempotency_key=?",
+        existing = conn.execute("SELECT id, status, request_id FROM partner_jobs WHERE idempotency_key=?",
                                 (job.idempotency_key,)).fetchone()
+        if existing["request_id"] != job.request_id:
+            raise HTTPException(409, "idempotency key already belongs to a different case")
         conn.commit()
         response.status_code = 200
         return {"job_id": existing["id"], "status": existing["status"], "duplicate": True}
@@ -108,7 +111,7 @@ def _send_event(conn, client, job_id: str, event_type: str, data: dict | None = 
         if previous:
             event = json.loads(previous["payload"])
             if data is not None and data != event["data"]:
-                raise HTTPException(409, "this action already has a different document")
+                raise HTTPException(409, "this action already has a different payload")
             if previous["delivered"]:
                 return job
         else:
@@ -129,7 +132,10 @@ def _send_event(conn, client, job_id: str, event_type: str, data: dict | None = 
         response = client.post(url, json=event, headers={"X-Partner-Secret": partner_webhook_secret()},
                                follow_redirects=False)
         response.raise_for_status()
-    except httpx.HTTPError as exc:
+        receipt = response.json()
+        if not isinstance(receipt, dict) or receipt.get("event_id") != event["event_id"]:
+            raise ValueError("callback acknowledgment did not match the event")
+    except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "retry this action because centrix did not acknowledge the callback") from exc
     with conn:
         conn.execute("UPDATE heatfix_callbacks SET delivered=1 WHERE job_id=? AND type=?", (job_id, event_type))
@@ -146,6 +152,11 @@ def reject(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client
     return _send_event(conn, client, job_id, "rejected")
 
 
+@router.post("/connector/jobs/{job_id}/fail")
+def fail_job(job_id: str, body: FailureReason, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, "failed", body.model_dump())
+
+
 @router.post("/connector/jobs/{job_id}/offer-slots")
 def offer_slots(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
     return _send_event(conn, client, job_id, "slots_offered")
@@ -160,6 +171,8 @@ def book(job_id: str, body: SlotChoice, conn=Depends(get_db)):
             if job["booked_slot_id"] != body.slot_id:
                 raise HTTPException(409, "job already booked for another slot")
         else:
+            if job["status"] != "slots_offered":
+                raise HTTPException(409, "job is no longer offering slots")
             if not any(slot["slot_id"] == body.slot_id for slot in job["slots"]):
                 raise HTTPException(422, "slot was not offered for this job")
             conn.execute("INSERT INTO heatfix_bookings (job_id,slot_id) VALUES (?,?)", (job_id, body.slot_id))

@@ -49,9 +49,12 @@ CREATE TABLE IF NOT EXISTS sharing_approvals (
   partner_id TEXT NOT NULL, shared_fields TEXT NOT NULL, channel TEXT NOT NULL,
   approved_by TEXT NOT NULL, recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS partner_orders (
+  case_id TEXT PRIMARY KEY REFERENCES sharing_approvals(case_id), payload TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS processed_partner_events (
   event_id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
-  job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL
+  job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL, event_data TEXT
 );
 CREATE TABLE IF NOT EXISTS case_documents (
   case_id TEXT NOT NULL REFERENCES cases(id),
@@ -114,6 +117,11 @@ def init_db(seed: bool = True) -> None:
         conn.execute("BEGIN IMMEDIATE")
         if "availability_preferences" not in {col["name"] for col in conn.execute("PRAGMA table_info(cases)")}:
             conn.execute("ALTER TABLE cases ADD COLUMN availability_preferences TEXT NOT NULL DEFAULT '[]'")
+        if "event_data" not in {col["name"] for col in conn.execute("PRAGMA table_info(processed_partner_events)")}:
+            conn.execute("ALTER TABLE processed_partner_events ADD COLUMN event_data TEXT")
+            for doc in conn.execute("SELECT event_id,content FROM case_documents"):
+                conn.execute("UPDATE processed_partner_events SET event_data=? WHERE event_id=?",
+                             (json.dumps(json.loads(doc["content"]), sort_keys=True), doc["event_id"]))
         if seed and conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
             load_seed(conn)
         conn.commit()

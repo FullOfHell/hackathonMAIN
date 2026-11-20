@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.db import get_db, now_iso
-from app.integrations.connector import N8nDispatchError, book_slot, build_job_request, dispatch_job, get_partner_client
+from app.integrations.connector import DispatchUnconfirmed, book_slot, build_job_request, dispatch_job, get_partner_client
 from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
-                         DocumentKind, ResidentSlotChoice, SharingApprovalIn)
+                         DocumentKind, PartnerJobRequest, ResidentAction, ResidentSlotChoice, SharingApprovalIn)
 from app.services import cases as svc
 from app.states import CaseStatus, check_transition
 
@@ -73,7 +73,8 @@ def create_case(body: CaseCreate, conn=Depends(get_db)):
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
                        {"partner_id": partner["id"], "reason": "service_type + region match"})
     else:
-        svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system")
+        svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system",
+                       {"reason": "no active partner covers this service and region"})
     conn.commit()
     return _with_sharing_request(conn, svc.get_case(conn, case_id))
 
@@ -98,6 +99,35 @@ def download_document(case_id: str, kind: DocumentKind, conn=Depends(get_db)):
     return JSONResponse(document, headers={"Content-Disposition": f'attachment; filename="{document["filename"]}"'})
 
 
+@router.post("/cases/{case_id}/escalate")
+def escalate(case_id: str, conn=Depends(get_db)):
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        case = _case_or_404(conn, case_id)
+        if case["status"] == CaseStatus.NEEDS_HUMAN_REVIEW:
+            return case
+        if case["status"] not in (CaseStatus.NO_PROVIDER_AVAILABLE, CaseStatus.DECLINED, CaseStatus.FAILED):
+            raise HTTPException(409, "only a failed, declined or unavailable repair can be escalated")
+        svc.transition(conn, case_id, CaseStatus.NEEDS_HUMAN_REVIEW, "manager",
+                       {"reason": case["status"], "job_id": case["partner_job_id"]})
+        return svc.get_case(conn, case_id)
+
+
+@router.post("/cases/{case_id}/cancel")
+def cancel_before_handoff(case_id: str, body: ResidentAction, conn=Depends(get_db)):
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        case = _case_or_404(conn, case_id)
+        if body.resident_id != case["resident_id"]:
+            raise HTTPException(403, "only the reporting resident can withdraw the request")
+        if case["status"] == CaseStatus.CANCELLED:
+            return case
+        if case["status"] != CaseStatus.AWAITING_SHARING_APPROVAL:
+            raise HTTPException(409, "only a case awaiting sharing approval can be withdrawn")
+        svc.transition(conn, case_id, CaseStatus.CANCELLED, f"resident:{body.resident_id}")
+        return svc.get_case(conn, case_id)
+
+
 @router.post("/cases/{case_id}/sharing-approval")
 def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
                     partner_client=Depends(get_partner_client)):
@@ -110,6 +140,9 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     missing = set(REQUIRED_SHARED_FIELDS) - set(body.approved_fields)
     if unknown or missing:
         raise HTTPException(422, {"unknown_fields": sorted(unknown), "missing_required_fields": sorted(missing)})
+    fields = sorted(set(body.approved_fields))
+    if case["sharing_approval"] and fields != sorted(set(case["sharing_approval"]["shared_fields"])):
+        raise HTTPException(409, "sharing approval already records a different set of fields")
 
     # Idempotent: a repeated approval after the job was requested returns the existing state.
     if case["sharing_approval"] and case["partner_job_id"]:
@@ -121,36 +154,43 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
                        {"partner_id": case["partner_id"]})
         conn.execute("INSERT INTO sharing_approvals (case_id,partner_id,shared_fields,channel,approved_by,recorded_at) "
-                     "VALUES (?,?,?,?,?,?)", (case_id, case["partner_id"], json.dumps(sorted(body.approved_fields)),
+                     "VALUES (?,?,?,?,?,?)", (case_id, case["partner_id"], json.dumps(fields),
                                                body.channel, body.approved_by, now_iso()))
         svc.record_event(conn, case_id, "sharing.approved", f"resident:{body.approved_by}",
-                         {"fields": sorted(body.approved_fields), "channel": body.channel})
+                         {"fields": fields, "channel": body.channel})
+    partner = dict(conn.execute("SELECT * FROM partners WHERE id=?", (case["partner_id"],)).fetchone())
+    order = conn.execute("SELECT payload FROM partner_orders WHERE case_id=?", (case_id,)).fetchone()
+    if order:
+        job = PartnerJobRequest.model_validate_json(order["payload"])
+    else:
+        case = svc.get_case(conn, case_id)
+        ctx = svc.unit_context(conn, case["unit_id"])
+        resident = next((r for r in ctx["residents"] if r["id"] == case["resident_id"]), None)
+        if resident is None:
+            raise HTTPException(409, "the reporting resident no longer belongs to this unit")
+        job = build_job_request(case, ctx, resident, case["sharing_approval"])
+        conn.execute("INSERT INTO partner_orders (case_id,payload) VALUES (?,?)", (case_id, job.model_dump_json()))
     conn.commit()
 
-    case = svc.get_case(conn, case_id)
-    ctx = svc.unit_context(conn, case["unit_id"])
-    resident = conn.execute("SELECT * FROM residents WHERE id=?", (case["resident_id"],)).fetchone()
-    partner = dict(conn.execute("SELECT * FROM partners WHERE id=?", (case["partner_id"],)).fetchone())
-    job = build_job_request(case, ctx, dict(resident), case["sharing_approval"])
     try:
         result = dispatch_job(partner_client, partner, job)
-    except N8nDispatchError as e:
-        # The partner may have stored the job before n8n timed out. Retry with the same key.
+    except DispatchUnconfirmed as e:
+        # A lost acknowledgment can follow a successful remote write.
         conn.execute("BEGIN IMMEDIATE")
         current = _case_or_404(conn, case_id)
         if current["partner_job_id"]:
             return current
         svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)})
         conn.commit()
-        raise HTTPException(502, "n8n dispatch was not confirmed; sharing approval can be retried") from e
-    except Exception as e:  # partner unreachable or rejected: explicit failure, never fake success
+        raise HTTPException(502, f"{e}. Retry the same sharing approval.") from e
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
         with conn:
             conn.execute("BEGIN IMMEDIATE")
             current = _case_or_404(conn, case_id)
             if current["partner_job_id"]:
                 return current
             if current["status"] == CaseStatus.PARTNER_REQUESTED:
-                svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)[:300]})
+                svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": type(e).__name__})
                 svc.transition(conn, case_id, CaseStatus.NEEDS_HUMAN_REVIEW, "system",
                                {"reason": "partner request failed"})
         raise HTTPException(502, "partner job request failed; case escalated for human review")

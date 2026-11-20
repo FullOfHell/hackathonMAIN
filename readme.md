@@ -105,4 +105,4 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The tenant portal can send an approved report to the simulated HeatFix inbox and show the case timeline. The tested backend flow reaches `SCHEDULED` when the reporting resident selects an offered slot and HeatFix confirms the booking. A rejected job reaches `DECLINED`. Portal slot selection, completion records and invoices are subsequent milestones.
+The tenant portal can send an approved report to the simulated HeatFix inbox and show the case timeline. The backend supports the full repair through `CLOSED`. After the resident books a slot, HeatFix starts the work, submits a repair report, then attaches an invoice. The unit history returns the booked appointment and both downloadable documents. The manager can escalate a declined, failed or unmatched case for human review. The partner controls, portal booking and manager view can use the [documented API actions](Docs/connector-spec.md).

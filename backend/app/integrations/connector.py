@@ -1,13 +1,17 @@
 """Generic partner connector v1 (client side). Provider-specific details stay behind this module."""
 import os
+import secrets
 
 import httpx
 
 from app.schemas import PartnerJobRequest
 
 
-class N8nDispatchError(Exception):
-    """The configured workflow did not acknowledge the partner job."""
+_LOCAL_CALLBACK_SECRET = secrets.token_urlsafe(32)
+
+
+class DispatchUnconfirmed(Exception):
+    """The partner may have received the job. It is safe to repeat the order."""
 
 
 def get_partner_client():
@@ -55,9 +59,22 @@ def build_job_request(case: dict, ctx: dict, resident: dict, approval: dict) -> 
 
 
 def create_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> dict:
-    resp = client.post(f"{partner['base_url']}/connector/jobs", json=job.model_dump())
+    try:
+        resp = client.post(f"{partner['base_url']}/connector/jobs", json=job.model_dump())
+    except httpx.ConnectError:
+        raise
+    except httpx.TransportError as exc:
+        raise DispatchUnconfirmed("partner dispatch was not confirmed") from exc
+    if resp.is_server_error:
+        raise DispatchUnconfirmed("partner dispatch was not confirmed")
     resp.raise_for_status()
-    return resp.json()
+    try:
+        result = resp.json()
+    except ValueError as exc:
+        raise DispatchUnconfirmed("partner returned an invalid job acknowledgment") from exc
+    if not isinstance(result, dict) or not isinstance(result.get("job_id"), str) or not result["job_id"].strip():
+        raise DispatchUnconfirmed("partner did not return a job ID")
+    return result
 
 
 def dispatch_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> dict:
@@ -67,7 +84,7 @@ def dispatch_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) ->
 
     secret = os.getenv("N8N_WEBHOOK_SECRET", "").strip()
     if not secret:
-        raise N8nDispatchError("N8N_WEBHOOK_SECRET is missing")
+        raise DispatchUnconfirmed("N8N_WEBHOOK_SECRET is missing")
 
     try:
         response = client.post(
@@ -79,13 +96,13 @@ def dispatch_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) ->
         response.raise_for_status()
         result = response.json()
     except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
-        raise N8nDispatchError("n8n webhook request failed") from exc
+        raise DispatchUnconfirmed("n8n dispatch was not confirmed") from exc
 
     if not isinstance(result, dict) or result.get("case_id") != job.request_id:
-        raise N8nDispatchError("n8n returned a response for an invalid case")
+        raise DispatchUnconfirmed("n8n returned a response for an invalid case")
     job_id = result.get("job_id")
     if not isinstance(job_id, str) or not job_id.strip():
-        raise N8nDispatchError("n8n did not return a job ID")
+        raise DispatchUnconfirmed("n8n did not return a job ID")
     return {"job_id": job_id, "duplicate": result.get("duplicate") is True}
 
 
@@ -99,4 +116,4 @@ def book_slot(client: httpx.Client, partner_url: str, job_id: str, slot_id: str)
 
 
 def partner_webhook_secret() -> str:
-    return os.getenv("PARTNER_WEBHOOK_SECRET") or "dev-partner-secret"
+    return os.getenv("PARTNER_WEBHOOK_SECRET") or _LOCAL_CALLBACK_SECRET

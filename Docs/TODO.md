@@ -20,9 +20,9 @@ This checklist turns the project plan into an execution order for the three-pers
 - [x] Create the FastAPI application and configure SQLite.
 - [x] Model property, unit, resident, maintenance case and an append-only case timeline.
 - [x] Model sharing approval, partner job and appointment.
-- [ ] Model completion reports and invoice documents.
+- [x] Model completion reports and invoice documents.
 - [x] Seed one fictional property, resident, prior heating case and active contractor.
-- [ ] Implement and validate the main state sequence:
+- [x] Implement and validate the main state sequence:
   - `REPORTED`
   - `TRIAGED`
   - `AWAITING_SHARING_APPROVAL`
@@ -32,7 +32,7 @@ This checklist turns the project plan into an execution order for the three-pers
   - `IN_PROGRESS`
   - `COMPLETED`
   - `CLOSED`
-- [ ] Support explicit failure states without arbitrary transitions.
+- [x] Support explicit failure states without arbitrary transitions.
 - [x] Record every transition with actor and timestamp.
 - [x] Implement `GET /api/units/{unit_id}/context`.
 - [x] Implement case creation, retrieval and event-history endpoints.
@@ -70,9 +70,9 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Validate resident identity and slot selection in the booking API.
 - [ ] Add a resident confirmation step and show the booked appointment returned by the API.
 - [x] Persist the selected appointment.
-- [ ] Let the partner mark work in progress and completed.
-- [ ] Attach a synthetic repair report and invoice.
-- [ ] Link the appointment, completion and invoice to the original case and unit.
+- [x] Accept partner start and completion actions through the HeatFix API.
+- [x] Attach a synthetic repair report and invoice through the HeatFix API.
+- [x] Link the appointment, completion and invoice to the original case and unit.
 - [ ] Build the property-manager/unit view.
 - [x] Display the persisted timeline after the initial partner handoff.
 - [ ] Refresh the resident timeline as the case progresses and show it in the manager view.
@@ -95,11 +95,11 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Add signed or shared-secret partner callbacks.
 - [x] Reject invalid callback signatures.
 - [x] Deduplicate repeated callback events.
-- [ ] Define timeout, rejection and unavailable-provider behavior.
+- [x] Define timeout, rejection and unavailable-provider behavior.
 - [x] Trace every request and callback to the original case.
 - [x] Create `Docs/connector-spec.md`.
 - [x] Export the approved-case n8n workflow with placeholders.
-- [ ] Keep all tokens and secrets in environment variables.
+- [x] Load configured backend and connector secrets from the environment.
 
 ## P0 - Tests and demo readiness
 
@@ -110,8 +110,8 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test slot selection and appointment persistence.
 - [x] Test valid and invalid state transitions.
 - [x] Test duplicate and invalid partner callbacks.
-- [ ] Test repair completion and invoice linking.
-- [ ] Test unavailable-provider escalation.
+- [x] Test repair completion and invoice linking across retries and restart.
+- [x] Test unavailable-provider escalation.
 - [ ] Rehearse the entire typed workflow repeatedly.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
@@ -121,7 +121,7 @@ Do not begin P1 work until this milestone is reliable.
 
 1. **Booking loop.** Add HeatFix accept, reject and offer-slot controls. Refresh the resident's case so offered slots appear, require explicit confirmation, and show the appointment only after FastAPI confirms it. Show declines, unavailable providers and retryable failures clearly.
 2. **Manager / unit view.** Show cases for the unit, who received the job, what was approved for sharing, the appointment and the backend event timeline. The unit case and event APIs already exist.
-3. **Repair completion and invoice.** Coordinate the contract with B, then wire the partner's start/complete actions and invoice attachment. Show the result on the resident and manager views once the APIs are ready.
+3. **Repair completion and invoice.** Wire the partner's start, complete and invoice actions. Show the returned documents on the resident and manager views. See the [connector contract](connector-spec.md).
 4. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
 5. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 
@@ -163,5 +163,5 @@ Implement in this order after P0 is stable:
 ## Next team handoffs
 
 - **A - Frontend:** connect the inbox and tenant portal to the booking endpoints, then add the manager/unit view.
-- **B - Backend:** define and implement repair completion and invoice persistence.
+- **B - Backend:** the P0 case, booking, repair, invoice and failure APIs are ready for A and C. The [closed-case fixture](../shared/fixtures/case-closed.json) matches the unit history response for a completed and invoiced case.
 - **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.
