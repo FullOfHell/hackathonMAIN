@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "event_id": "evt_failed_001",
+  "request_id": "case_001",
+  "job_id": "job_1234abcd",
+  "type": "failed",
+  "occurred_at": "2026-11-20T18:15:00Z",
+  "data": {"reason": "Technician unavailable for this repair"}
+}

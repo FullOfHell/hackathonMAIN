@@ -105,4 +105,6 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline. The next milestone is repair completion and invoices.
+The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline.
+
+The backend supports repair start, completion, and invoice attachment through `CLOSED`. The unit history returns the appointment and both downloadable documents. There is also an API to escalate declined, failed or unmatched cases for human review. The remaining browser work is to wire the repair actions and display the documents. See the [connector specification](Docs/connector-spec.md).

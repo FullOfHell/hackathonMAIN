@@ -37,14 +37,30 @@ CREATE TABLE IF NOT EXISTS case_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
   type TEXT NOT NULL, actor TEXT NOT NULL, timestamp TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TRIGGER IF NOT EXISTS case_events_no_update BEFORE UPDATE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS case_events_no_delete BEFORE DELETE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS case_events_no_replace BEFORE INSERT ON case_events
+WHEN EXISTS (SELECT 1 FROM case_events WHERE id=NEW.id)
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
 CREATE TABLE IF NOT EXISTS sharing_approvals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL UNIQUE REFERENCES cases(id),
   partner_id TEXT NOT NULL, shared_fields TEXT NOT NULL, channel TEXT NOT NULL,
   approved_by TEXT NOT NULL, recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS partner_orders (
+  case_id TEXT PRIMARY KEY REFERENCES sharing_approvals(case_id), payload TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS processed_partner_events (
   event_id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
-  job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL
+  job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL, event_data TEXT
+);
+CREATE TABLE IF NOT EXISTS case_documents (
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  kind TEXT NOT NULL CHECK (kind IN ('completion_report','invoice')),
+  event_id TEXT NOT NULL UNIQUE REFERENCES processed_partner_events(event_id),
+  content TEXT NOT NULL, PRIMARY KEY (case_id,kind)
 );
 CREATE TABLE IF NOT EXISTS appointment_slots (
   case_id TEXT NOT NULL REFERENCES cases(id), slot_id TEXT NOT NULL,
@@ -101,6 +117,11 @@ def init_db(seed: bool = True) -> None:
         conn.execute("BEGIN IMMEDIATE")
         if "availability_preferences" not in {col["name"] for col in conn.execute("PRAGMA table_info(cases)")}:
             conn.execute("ALTER TABLE cases ADD COLUMN availability_preferences TEXT NOT NULL DEFAULT '[]'")
+        if "event_data" not in {col["name"] for col in conn.execute("PRAGMA table_info(processed_partner_events)")}:
+            conn.execute("ALTER TABLE processed_partner_events ADD COLUMN event_data TEXT")
+            for doc in conn.execute("SELECT event_id,content FROM case_documents"):
+                conn.execute("UPDATE processed_partner_events SET event_data=? WHERE event_id=?",
+                             (json.dumps(json.loads(doc["content"]), sort_keys=True), doc["event_id"]))
         if seed and conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
             load_seed(conn)
         conn.commit()

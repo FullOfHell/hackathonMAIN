@@ -11,8 +11,14 @@ The centrix stand-in owns cases and appointments. The simulated HeatFix contract
 | Offer times | `POST /partners/heatfix/connector/jobs/{job_id}/offer-slots`, empty body, after acceptance | HeatFix returns the job and two slots. The callback moves the case to `SLOTS_OFFERED`. |
 | Read the offer or appointment | `GET /api/cases/{case_id}` | `slots` is an array of objects with `slot_id`, `start`, and `end`. It starts empty. `appointment` starts as `null` and contains those same fields plus `case_id` and `booked_at` after booking. All times include a UTC offset or `Z`. |
 | Confirm a time | `POST /api/cases/{case_id}/select-slot` with `{"slot_id":"<offered ID>","resident_id":"c_202"}` | Returns the case in `SCHEDULED` after partner confirmation. Repeating the selection returns the same appointment. |
+| Start work | `POST /partners/heatfix/connector/jobs/{job_id}/start`, empty body | Moves the scheduled case to `IN_PROGRESS`. |
+| Complete repair | `POST /partners/heatfix/connector/jobs/{job_id}/complete` with `{"summary":"Replaced the radiator valve and verified heating."}` | Stores a synthetic completion report and moves the case to `COMPLETED`. |
+| Attach invoice | `POST /partners/heatfix/connector/jobs/{job_id}/invoice` with `invoice_number`, `description`, `amount_cents` and `currency` | Stores the invoice on the completed case and closes it. Amount is a nonnegative integer in cents and currency is `EUR`. |
+| Read the unit outcome | `GET /api/units/{unit_id}/cases` and `GET /api/cases/{case_id}/events` | The case includes its appointment, completion report and invoice. Each document has its case ID, unit ID and a case-scoped JSON download URL. The timeline returns events in append order. |
 
 Use the `resident_id` and `slot_id` from the case being displayed. A different resident receives 403. A slot outside the case's offer receives 422. Changing an existing booking to another offered slot returns 409. If booking returns 502, the resident can retry the same slot. The case and its event history show the persisted outcome.
+
+Both document fields start as `null`. The document download returns 404 until its corresponding callback succeeds. The dashboard can repeat an action with the same content after a lost reply. Changing a previously submitted report or invoice returns 409. See the [repair callback examples](../shared/fixtures/partner-repair-events.json) and [closed case](../shared/fixtures/case-closed.json).
 
 ## Partner jobs and bookings
 
@@ -26,10 +32,27 @@ HeatFix posts to the job's `callback_url` with the `X-Partner-Secret` header. Bo
 
 | Type | Data | Persisted result |
 | --- | --- | --- |
-| `accepted` | Optional object | Records the partner event. The case stays in its current state. |
+| `accepted` | Optional object | Records the first acceptance for a requested job. The case remains in `PARTNER_REQUESTED`. |
 | `rejected` | Optional object | Transitions the requested case to `DECLINED`. |
 | `slots_offered` | `data.slots` contains at least one slot, with unique IDs within the case and offset-aware start and end times | Stores the slots and transitions the requested case to `SLOTS_OFFERED` in one transaction. |
+| `in_progress` | Empty object | Transitions a scheduled case to `IN_PROGRESS`. |
+| `completed` | `data.summary` (1–2,000 characters) | Stores the repair report and transitions an in-progress case to `COMPLETED` in one transaction. |
+| `invoice_ready` | `data.invoice_number` (1–80 characters), `description` (1–2,000 characters), `amount_cents` and `currency` | Requires the completion report. Stores the invoice and transitions the completed case to `CLOSED` in one transaction. |
+| `failed` | `data.reason` (1–500 characters) | Moves a requested, offered, scheduled or in-progress repair to `FAILED` and records the reason in the timeline. |
 
 A successful callback returns 200 with `event_id` and `duplicate`. HeatFix retains the original event ID and payload across delivery retries. Duplicate IDs produce no additional timeline entries or slots. Case status changes record the actor, timestamp and associated job ID. A callback with a missing or incorrect secret receives 401, an unknown case receives 404, and a mismatched job or invalid state transition receives 409. An unsupported type or invalid slot payload receives 422. Failed callbacks leave the event ID available for a corrected retry.
 
-The mock partner returns 502 if callback delivery fails. Repeat the same partner action to deliver the saved event. A booking timeout or mismatched confirmation records `partner.booking_unconfirmed` on the case. Retrying the same resident selection reconciles a booking if the original HTTP reply was lost.
+The mock partner returns 502 if callback delivery fails or the acknowledgment omits the matching event ID. Repeat the same partner action to deliver the saved event. A booking timeout or mismatched confirmation records `partner.booking_unconfirmed` on the case. Retrying the same resident selection reconciles a booking if the original HTTP reply was lost.
+
+Reuse the original callback ID, timestamp and data for a retry. A conflicting replay returns 409. Upgrading an existing database preserves receipts and restores document payloads from stored reports and invoices. For older non-document receipts, only the original case, job, type and timestamp are available for comparison. A connector job key also belongs to one case. Reusing it for a different case returns 409.
+
+## Failures and human review
+
+| Situation | API behavior and next action |
+| --- | --- |
+| No eligible active partner | The new case enters `NO_PROVIDER_AVAILABLE`. The resident's report stays on the unit and sharing approval is unavailable. |
+| Resident withdraws before sharing | `POST /api/cases/{case_id}/cancel` with `resident_id` returns `CANCELLED`. Repeating the withdrawal returns the same case. |
+| Unconfirmed dispatch | A direct timeout, 5xx reply, invalid acknowledgment or unconfirmed n8n request returns 502. Repeat the original sharing approval to reconcile the job using the same key. Changing the approved field set returns 409. |
+| Direct dispatch refused or partner unreachable | The API returns 502 and records the failure and `NEEDS_HUMAN_REVIEW` on the case. |
+| Partner declines or cannot finish | Use `/reject` on a pending job, or `POST /partners/heatfix/connector/jobs/{job_id}/fail` with a `reason` while the job is active. The case records `DECLINED` or `FAILED`, respectively. |
+| Manager takes ownership | `POST /api/cases/{case_id}/escalate`, empty body, moves a `DECLINED`, `FAILED` or `NO_PROVIDER_AVAILABLE` case to `NEEDS_HUMAN_REVIEW`. Repeating the action returns the same case. Other states return 409. |

@@ -9,10 +9,20 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
-from app.schemas import PartnerJobRequest, SlotChoice
+from app.schemas import FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
 
 PARTNER_ID = "p_heatfix"
 router = APIRouter(prefix="/partners/heatfix", tags=["mock partner: HeatFix"])
+
+ALLOWED_JOB_ACTIONS = {
+    "accepted": {"received"},
+    "rejected": {"received", "accepted"},
+    "slots_offered": {"accepted"},
+    "in_progress": {"scheduled"},
+    "completed": {"in_progress"},
+    "invoice_ready": {"completed"},
+    "failed": {"received", "accepted", "slots_offered", "scheduled", "in_progress"},
+}
 
 
 @router.get("/connector/capabilities")
@@ -24,7 +34,7 @@ def capabilities():
         "regions": ["Aachen"],
         "required_fields": ["address", "unit", "issue"],
         "optional_fields": ["heating_type", "access_details", "name", "contact", "previous_record"],
-        "events": ["accepted", "rejected", "slots_offered"],
+        "events": list(ALLOWED_JOB_ACTIONS),
     }
 
 
@@ -37,8 +47,10 @@ def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db))
                             (job_id, PARTNER_ID, job.idempotency_key, job.request_id, job.model_dump_json(),
                              "received", now_iso()))
     if not inserted.rowcount:
-        existing = conn.execute("SELECT id, status FROM partner_jobs WHERE idempotency_key=?",
+        existing = conn.execute("SELECT id, status, request_id FROM partner_jobs WHERE idempotency_key=?",
                                 (job.idempotency_key,)).fetchone()
+        if existing["request_id"] != job.request_id:
+            raise HTTPException(409, "idempotency key already belongs to a different case")
         conn.commit()
         response.status_code = 200
         return {"job_id": existing["id"], "status": existing["status"], "duplicate": True}
@@ -83,8 +95,7 @@ def _demo_slots(job_id: str) -> list[dict]:
     return slots
 
 
-def _send_event(conn, client, job_id: str, event_type: str):
-    allowed_from = {"accepted": {"received"}, "rejected": {"received", "accepted"}, "slots_offered": {"accepted"}}
+def _send_event(conn, client, job_id: str, event_type: str, data: dict | None = None):
     with conn:
         conn.execute("BEGIN IMMEDIATE")
         job = get_job(job_id, conn)
@@ -98,17 +109,20 @@ def _send_event(conn, client, job_id: str, event_type: str):
         previous = conn.execute("SELECT payload,delivered FROM heatfix_callbacks WHERE job_id=? AND type=?",
                                 (job_id, event_type)).fetchone()
         if previous:
+            event = json.loads(previous["payload"])
+            if data is not None and data != event["data"]:
+                raise HTTPException(409, "this action already has a different payload")
             if previous["delivered"]:
                 return job
-            event = json.loads(previous["payload"])
         else:
-            if job["status"] not in allowed_from[event_type]:
+            if job["status"] not in ALLOWED_JOB_ACTIONS[event_type]:
                 raise HTTPException(409, f"cannot send {event_type} for a {job['status']} job")
             if conn.execute("SELECT 1 FROM heatfix_callbacks WHERE job_id=? AND delivered=0", (job_id,)).fetchone():
                 raise HTTPException(409, "retry the previous action to deliver its pending callback")
-            data = {"slots": _demo_slots(job_id)} if event_type == "slots_offered" else {}
+            if event_type == "slots_offered":
+                data = {"slots": _demo_slots(job_id)}
             event = {"schema_version": "1.0", "event_id": f"evt_{uuid.uuid4().hex}", "job_id": job_id,
-                     "request_id": job["request_id"], "type": event_type, "occurred_at": now_iso(), "data": data}
+                     "request_id": job["request_id"], "type": event_type, "occurred_at": now_iso(), "data": data or {}}
             conn.execute("INSERT INTO heatfix_callbacks (job_id,type,payload) VALUES (?,?,?)",
                          (job_id, event_type, json.dumps(event)))
             conn.execute("UPDATE partner_jobs SET status=? WHERE id=?", (event_type, job_id))
@@ -118,7 +132,10 @@ def _send_event(conn, client, job_id: str, event_type: str):
         response = client.post(url, json=event, headers={"X-Partner-Secret": partner_webhook_secret()},
                                follow_redirects=False)
         response.raise_for_status()
-    except httpx.HTTPError as exc:
+        receipt = response.json()
+        if not isinstance(receipt, dict) or receipt.get("event_id") != event["event_id"]:
+            raise ValueError("callback acknowledgment did not match the event")
+    except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "retry this action because centrix did not acknowledge the callback") from exc
     with conn:
         conn.execute("UPDATE heatfix_callbacks SET delivered=1 WHERE job_id=? AND type=?", (job_id, event_type))
@@ -135,6 +152,11 @@ def reject(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client
     return _send_event(conn, client, job_id, "rejected")
 
 
+@router.post("/connector/jobs/{job_id}/fail")
+def fail_job(job_id: str, body: FailureReason, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, "failed", body.model_dump())
+
+
 @router.post("/connector/jobs/{job_id}/offer-slots")
 def offer_slots(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
     return _send_event(conn, client, job_id, "slots_offered")
@@ -149,8 +171,25 @@ def book(job_id: str, body: SlotChoice, conn=Depends(get_db)):
             if job["booked_slot_id"] != body.slot_id:
                 raise HTTPException(409, "job already booked for another slot")
         else:
+            if job["status"] != "slots_offered":
+                raise HTTPException(409, "job is no longer offering slots")
             if not any(slot["slot_id"] == body.slot_id for slot in job["slots"]):
                 raise HTTPException(422, "slot was not offered for this job")
             conn.execute("INSERT INTO heatfix_bookings (job_id,slot_id) VALUES (?,?)", (job_id, body.slot_id))
             conn.execute("UPDATE partner_jobs SET status='scheduled' WHERE id=?", (job_id,))
     return {"job_id": job_id, "status": "scheduled", "slot_id": body.slot_id}
+
+
+@router.post("/connector/jobs/{job_id}/start")
+def start_work(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, "in_progress")
+
+
+@router.post("/connector/jobs/{job_id}/complete")
+def complete_work(job_id: str, body: RepairReport, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, "completed", body.model_dump())
+
+
+@router.post("/connector/jobs/{job_id}/invoice")
+def submit_invoice(job_id: str, body: RepairInvoice, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, "invoice_ready", body.model_dump())

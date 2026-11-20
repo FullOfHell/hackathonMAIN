@@ -1,0 +1,16 @@
+[
+  {
+    "schema_version": "1.0", "event_id": "evt_start_001", "request_id": "case_001", "job_id": "job_1234abcd",
+    "type": "in_progress", "occurred_at": "2026-11-21T08:00:00Z", "data": {}
+  },
+  {
+    "schema_version": "1.0", "event_id": "evt_complete_001", "request_id": "case_001", "job_id": "job_1234abcd",
+    "type": "completed", "occurred_at": "2026-11-21T09:10:00Z",
+    "data": {"summary": "Replaced the radiator valve and verified that heating was restored."}
+  },
+  {
+    "schema_version": "1.0", "event_id": "evt_invoice_001", "request_id": "case_001", "job_id": "job_1234abcd",
+    "type": "invoice_ready", "occurred_at": "2026-11-21T09:20:00Z",
+    "data": {"invoice_number": "HF-DEMO-001", "description": "Radiator valve and labour", "amount_cents": 12500, "currency": "EUR"}
+  }
+]
