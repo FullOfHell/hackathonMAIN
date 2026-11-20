@@ -11,7 +11,7 @@ import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDispl
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
-  Contractor, IntakeRequest, MaintenanceCase, PartnerAction, PartnerCommand,
+  Contractor, IntakeRequest, MaintenanceCase, ManagerRepair, PartnerAction, PartnerCommand,
   PartnerInboxJob, RepairInvoiceInput, Resident, ResidentProfileChanges, SharingApprovalRequest, SharingRequest, UnitContext,
 } from './types/domain'
 import './Portal.css'
@@ -659,21 +659,28 @@ function Manager(props: {
   onAdded: (contractor: Contractor) => void
 }) {
   const home = useLoad(loadHome)
-  const cases = useLoad(loadUnitCases)
+  const repairs = useLoad(api.listManagerRepairs)
   return (
     <div>
-      <ManagerContractors {...props} region={home.data?.property.region ?? ''} />
-      <section className="inbox" aria-label="Unit cases">
+      <ManagerContractors {...props} region={home.data?.property.region ?? ''} onAdded={(contractor) => {
+        props.onAdded(contractor)
+        repairs.reload()
+      }} />
+      <section className="inbox" aria-label="Repairs by contractor">
         <div className="inbox-heading">
-          <div><h2>{home.data ? 'Unit ' + home.data.unit.label : 'Unit cases'}</h2>
-            {home.data && <p>{home.data.property.address}</p>}
-            {home.failed && <p role="alert">Unit details unavailable.</p>}</div>
-          <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh unit</button>
+          <h2>Repairs by contractor</h2>
+          <button className="secondary" disabled={repairs.refreshing} onClick={repairs.reload}>Refresh repairs</button>
         </div>
-        {cases.failed ? <p className="panel error" role="alert">Cases could not be loaded. Try refreshing.</p>
-          : !cases.data ? <p className="panel" role="status">Loading cases…</p>
-            : !cases.data.length ? <p className="panel">No cases for this unit yet.</p>
-              : cases.data.map((item) => <ManagerCase key={item.id} item={item} />)}
+        {repairs.failed ? <p className="panel error" role="alert">Repairs could not be loaded. Try refreshing.</p>
+          : !repairs.data ? <p className="panel" role="status">Loading repairs…</p>
+            : !repairs.data.length ? <p className="panel">No repair reports yet.</p>
+              : repairs.data.map(({ contractor, repairs: cases }) => {
+                const groupId = 'repair-group-' + (contractor?.id ?? 'unassigned')
+                return <section className="inbox manager-repair-group" key={groupId} aria-labelledby={groupId}>
+                  <h3 id={groupId}>{contractor?.name ?? 'Unassigned'}</h3>
+                  {cases.map((repair) => <ManagerCase key={repair.case.id} repair={repair} />)}
+                </section>
+              })}
       </section>
     </div>
   )
@@ -713,15 +720,16 @@ function ResidentCase({ item }: { item: MaintenanceCase }) {
   )
 }
 
-function ManagerCase({ item }: { item: MaintenanceCase }) {
+function ManagerCase({ repair }: { repair: ManagerRepair }) {
+  const { case: item, address, unit } = repair
   const [showTimeline, setShowTimeline] = useState(false)
-  const contractor = item.sharing_request?.partner.name ?? (item.partner_id === 'p_heatfix' ? 'HeatFix Aachen GmbH' : item.partner_id)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h4>Case {item.id}</h4><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <dl className="home-details">
-        <dt>Contractor</dt><dd>{contractor ?? 'Unassigned'}</dd>
+        <dt>Repair address</dt><dd>{address}</dd>
+        <dt>Unit</dt><dd>{unit}</dd>
         <dt>Sharing approval</dt><dd>{item.sharing_approval
           ? item.sharing_approval.shared_fields.map(statusLabel).join(', ') + ' · ' + formatTime(item.sharing_approval.recorded_at)
           : 'No approval recorded'}</dd>

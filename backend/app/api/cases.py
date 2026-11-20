@@ -93,6 +93,32 @@ def get_unit_cases(unit_id: str, conn=Depends(get_db)):
             conn.execute("SELECT id FROM cases WHERE unit_id=? ORDER BY created_at DESC", (unit_id,))]
 
 
+@router.get("/manager/repairs")
+def list_manager_repairs(conn=Depends(get_db)):
+    conn.execute("BEGIN")
+    contractors = dict(conn.execute("SELECT id,name FROM partners"))
+    rows = conn.execute(
+        "SELECT c.id,u.unit_label,p.address,r.address AS resident_address,r.unit AS resident_unit,"
+        "json_extract(o.payload,'$.property.address') AS approved_address,"
+        "json_extract(o.payload,'$.property.unit') AS approved_unit "
+        "FROM cases c JOIN units u ON u.id=c.unit_id JOIN properties p ON p.id=u.property_id "
+        "JOIN residents r ON r.id=c.resident_id LEFT JOIN partner_orders o ON o.case_id=c.id "
+        "ORDER BY c.created_at DESC,c.rowid DESC")
+    groups = {}
+    for row in rows:
+        case = _with_sharing_request(conn, svc.get_case(conn, row["id"]))
+        pending = case["status"] in UNAPPROVED_REPAIR_STATES and not case["sharing_approval"]
+        address = row["approved_address"] or (row["resident_address"] if pending else None) or row["address"]
+        unit = row["approved_unit"] or (row["resident_unit"] if pending else None) or row["unit_label"]
+        groups.setdefault(case["partner_id"], []).append({"case": case, "address": address, "unit": unit})
+
+    return [
+        {"contractor": {"id": partner_id, "name": contractors[partner_id]} if partner_id else None, "repairs": repairs}
+        for partner_id, repairs in sorted(groups.items(), key=lambda group: (group[0] is None,
+                                             contractors.get(group[0], "").casefold()))
+    ]
+
+
 @router.post("/cases", status_code=201)
 def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(get_partner_client)):
     conn.execute("BEGIN IMMEDIATE")
