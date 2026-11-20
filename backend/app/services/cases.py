@@ -53,6 +53,18 @@ def new_case_id() -> str:
     return f"case_{uuid.uuid4().hex[:8]}"
 
 
+def case_documents(conn: sqlite3.Connection, case_id: str) -> dict:
+    rows = conn.execute(
+        "SELECT d.kind,d.content,c.unit_id,e.occurred_at FROM case_documents d "
+        "JOIN cases c ON c.id=d.case_id JOIN processed_partner_events e ON e.event_id=d.event_id "
+        "WHERE d.case_id=?", (case_id,))
+    return {row["kind"]: {
+        **json.loads(row["content"]), "kind": row["kind"], "case_id": case_id, "unit_id": row["unit_id"],
+        "created_at": row["occurred_at"], "filename": f"{row['kind']}.json",
+        "url": f"/api/cases/{case_id}/documents/{row['kind']}",
+    } for row in rows}
+
+
 def get_case(conn: sqlite3.Connection, case_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
     if not row:
@@ -67,6 +79,9 @@ def get_case(conn: sqlite3.Connection, case_id: str) -> dict | None:
         "SELECT a.case_id,a.slot_id,s.start,s.end,a.booked_at FROM appointments a "
         "JOIN appointment_slots s USING (case_id,slot_id) WHERE a.case_id=?", (case_id,)).fetchone()
     case["appointment"] = dict(appointment) if appointment else None
+    documents = case_documents(conn, case_id)
+    case["completion_report"] = documents.get("completion_report")
+    case["invoice"] = documents.get("invoice")
     appr = conn.execute("SELECT * FROM sharing_approvals WHERE case_id=?", (case_id,)).fetchone()
     case["sharing_approval"] = ({**dict(appr), "shared_fields": json.loads(appr["shared_fields"])} if appr else None)
     return case

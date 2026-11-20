@@ -1,7 +1,7 @@
 """API request/response models. Shared team contract: see Docs/Reltix_Hackathon_Project_Plan.md §5."""
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 IssueType = Literal["heating_repair"]
 Urgency = Literal["low", "normal", "high"]
@@ -81,7 +81,7 @@ class CallbackEnvelope(BaseModel):
 
 
 class PartnerDecision(CallbackEnvelope):
-    type: Literal["accepted", "rejected"]
+    type: Literal["accepted", "rejected", "in_progress"]
     data: dict = Field(default_factory=dict)
 
 
@@ -90,4 +90,30 @@ class SlotsOffered(CallbackEnvelope):
     data: SlotOffer
 
 
-PartnerEvent = Annotated[PartnerDecision | SlotsOffered, Field(discriminator="type")]
+DocumentKind = Literal["completion_report", "invoice"]
+
+
+class RepairReport(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    summary: str = Field(min_length=1, max_length=2000)
+
+
+class RepairInvoice(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    invoice_number: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=2000)
+    amount_cents: int = Field(strict=True, ge=0)
+    currency: Literal["EUR"]
+
+
+class RepairCompleted(CallbackEnvelope):
+    type: Literal["completed"]
+    data: RepairReport
+
+
+class InvoiceReady(CallbackEnvelope):
+    type: Literal["invoice_ready"]
+    data: RepairInvoice
+
+
+PartnerEvent = Annotated[PartnerDecision | SlotsOffered | RepairCompleted | InvoiceReady, Field(discriminator="type")]

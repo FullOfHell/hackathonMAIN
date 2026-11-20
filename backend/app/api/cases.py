@@ -3,11 +3,12 @@ import json
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.db import get_db, now_iso
 from app.integrations.connector import N8nDispatchError, book_slot, build_job_request, dispatch_job, get_partner_client
 from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
-                         ResidentSlotChoice, SharingApprovalIn)
+                         DocumentKind, ResidentSlotChoice, SharingApprovalIn)
 from app.services import cases as svc
 from app.states import CaseStatus, check_transition
 
@@ -89,6 +90,14 @@ def get_events(case_id: str, conn=Depends(get_db)):
     return svc.list_events(conn, case_id)
 
 
+@router.get("/cases/{case_id}/documents/{kind}")
+def download_document(case_id: str, kind: DocumentKind, conn=Depends(get_db)):
+    document = svc.case_documents(conn, case_id).get(kind)
+    if document is None:
+        raise HTTPException(404, "document not found for this case")
+    return JSONResponse(document, headers={"Content-Disposition": f'attachment; filename="{document["filename"]}"'})
+
+
 @router.post("/cases/{case_id}/sharing-approval")
 def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
                     partner_client=Depends(get_partner_client)):
@@ -105,6 +114,8 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     # Idempotent: a repeated approval after the job was requested returns the existing state.
     if case["sharing_approval"] and case["partner_job_id"]:
         return _with_sharing_request(conn, case)
+    if case["sharing_approval"] and case["status"] != CaseStatus.PARTNER_REQUESTED:
+        raise HTTPException(409, "case is no longer awaiting partner dispatch")
 
     if not case["sharing_approval"]:
         svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
@@ -133,9 +144,15 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         conn.commit()
         raise HTTPException(502, "n8n dispatch was not confirmed; sharing approval can be retried") from e
     except Exception as e:  # partner unreachable or rejected: explicit failure, never fake success
-        svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)[:300]})
-        svc.transition(conn, case_id, CaseStatus.NEEDS_HUMAN_REVIEW, "system", {"reason": "partner request failed"})
-        conn.commit()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = _case_or_404(conn, case_id)
+            if current["partner_job_id"]:
+                return current
+            if current["status"] == CaseStatus.PARTNER_REQUESTED:
+                svc.record_event(conn, case_id, "partner.job_request_failed", "system", {"error": str(e)[:300]})
+                svc.transition(conn, case_id, CaseStatus.NEEDS_HUMAN_REVIEW, "system",
+                               {"reason": "partner request failed"})
         raise HTTPException(502, "partner job request failed; case escalated for human review")
     linked = conn.execute("UPDATE cases SET partner_job_id=?, updated_at=? WHERE id=? AND partner_job_id IS NULL",
                           (result["job_id"], now_iso(), case_id))

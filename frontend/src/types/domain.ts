@@ -88,11 +88,34 @@ export interface AppointmentSlot {
   end: string
 }
 
+interface CaseDocument {
+  case_id: string
+  unit_id: string
+  created_at: string
+  filename: string
+  url: string
+}
+
+export interface CompletionReport extends CaseDocument {
+  kind: 'completion_report'
+  summary: string
+}
+
+export interface RepairInvoice extends CaseDocument {
+  kind: 'invoice'
+  invoice_number: string
+  description: string
+  amount_cents: number
+  currency: 'EUR'
+}
+
 export interface MaintenanceCase extends CreateCaseRequest {
   id: string
   availability_preferences: string[]
   slots: AppointmentSlot[]
   appointment: (AppointmentSlot & { case_id: string; booked_at: string }) | null
+  completion_report: CompletionReport | null
+  invoice: RepairInvoice | null
   status: CaseStatus
   partner_id: string | null
   partner_job_id: string | null

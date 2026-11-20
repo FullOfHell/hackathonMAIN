@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS case_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
   type TEXT NOT NULL, actor TEXT NOT NULL, timestamp TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TRIGGER IF NOT EXISTS case_events_no_update BEFORE UPDATE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS case_events_no_delete BEFORE DELETE ON case_events
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS case_events_no_replace BEFORE INSERT ON case_events
+WHEN EXISTS (SELECT 1 FROM case_events WHERE id=NEW.id)
+BEGIN SELECT RAISE(ABORT, 'case events are append-only'); END;
 CREATE TABLE IF NOT EXISTS sharing_approvals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL UNIQUE REFERENCES cases(id),
   partner_id TEXT NOT NULL, shared_fields TEXT NOT NULL, channel TEXT NOT NULL,
@@ -45,6 +52,12 @@ CREATE TABLE IF NOT EXISTS sharing_approvals (
 CREATE TABLE IF NOT EXISTS processed_partner_events (
   event_id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
   job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_documents (
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  kind TEXT NOT NULL CHECK (kind IN ('completion_report','invoice')),
+  event_id TEXT NOT NULL UNIQUE REFERENCES processed_partner_events(event_id),
+  content TEXT NOT NULL, PRIMARY KEY (case_id,kind)
 );
 CREATE TABLE IF NOT EXISTS appointment_slots (
   case_id TEXT NOT NULL REFERENCES cases(id), slot_id TEXT NOT NULL,

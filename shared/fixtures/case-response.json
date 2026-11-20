@@ -12,6 +12,8 @@
   "partner_job_id": null,
   "slots": [],
   "appointment": null,
+  "completion_report": null,
+  "invoice": null,
   "source_channel": "portal_chat",
   "created_at": "2026-11-20T18:02:00Z",
   "updated_at": "2026-11-20T18:02:01Z",

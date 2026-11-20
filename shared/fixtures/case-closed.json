@@ -1,0 +1,42 @@
+{
+  "id": "case_001",
+  "unit_id": "unit_4b",
+  "resident_id": "c_202",
+  "issue_type": "heating_repair",
+  "description": "No heat since last night, radiators are cold.",
+  "symptoms": ["radiators_cold"],
+  "availability_preferences": ["Weekday mornings"],
+  "urgency": "high",
+  "status": "CLOSED",
+  "partner_id": "p_heatfix",
+  "partner_job_id": "job_1234abcd",
+  "slots": [
+    {"slot_id": "slot_1", "start": "2026-11-21T08:00:00+01:00", "end": "2026-11-21T10:00:00+01:00"},
+    {"slot_id": "slot_2", "start": "2026-11-21T14:00:00+01:00", "end": "2026-11-21T16:00:00+01:00"}
+  ],
+  "appointment": {
+    "case_id": "case_001", "slot_id": "slot_1",
+    "start": "2026-11-21T08:00:00+01:00", "end": "2026-11-21T10:00:00+01:00",
+    "booked_at": "2026-11-20T18:12:00Z"
+  },
+  "completion_report": {
+    "kind": "completion_report", "case_id": "case_001", "unit_id": "unit_4b",
+    "created_at": "2026-11-21T09:10:00+00:00", "filename": "completion_report.json",
+    "url": "/api/cases/case_001/documents/completion_report",
+    "summary": "Replaced the radiator valve and verified that heating was restored."
+  },
+  "invoice": {
+    "kind": "invoice", "case_id": "case_001", "unit_id": "unit_4b",
+    "created_at": "2026-11-21T09:20:00+00:00", "filename": "invoice.json",
+    "url": "/api/cases/case_001/documents/invoice",
+    "invoice_number": "HF-DEMO-001", "description": "Radiator valve and labour", "amount_cents": 12500, "currency": "EUR"
+  },
+  "source_channel": "portal_chat",
+  "created_at": "2026-11-20T18:02:00Z",
+  "updated_at": "2026-11-21T09:20:01Z",
+  "sharing_approval": {
+    "id": 1, "case_id": "case_001", "partner_id": "p_heatfix", "channel": "portal_chat",
+    "approved_by": "c_202", "recorded_at": "2026-11-20T18:05:00Z",
+    "shared_fields": ["access_details", "address", "contact", "heating_type", "issue", "name", "unit"]
+  }
+}
