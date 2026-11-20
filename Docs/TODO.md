@@ -79,6 +79,7 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Display the persisted timeline after the initial partner handoff.
 - [x] Refresh the resident timeline through booking and show it in the manager view.
 - [x] Wire repair start, completion and synthetic invoice submission into the HeatFix inbox.
+- [x] Expose the saved pending callback on HeatFix job reads and support retry by job and event ID after a restart.
 - [x] Show the repair outcome and linked invoice in resident and manager views.
 - [x] Drive live case progress from backend responses and the persisted timeline.
 
@@ -121,6 +122,7 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test valid and invalid state transitions.
 - [x] Test duplicate and invalid partner callbacks.
 - [x] Test repair completion and invoice linking across retries and restart.
+- [x] Verify that concurrent retries after an outage or lost acknowledgment produce one document and one corresponding case transition.
 - [x] Test unavailable-provider escalation.
 - [x] Verify the typed report-to-invoice flow in the browser against local FastAPI and offline fixtures.
 - [ ] Rehearse the full typed demo with live n8n enabled.
@@ -132,6 +134,7 @@ Do not begin P1 work until this milestone is reliable.
 
 1. **Demo and QA.** Rehearse from a fresh seed with live n8n enabled. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 2. **Optional dictation.** Pair with C for the live microphone check after the key is configured. Keep typed intake available for the rehearsal.
+3. **A — HeatFix inbox recovery.** Read `pending_callback` from each job on load or refresh. When present, show “Retry delivery” and POST the event ID to the retry endpoint with an empty body. Use the returned job on success and refresh after a 502. A job's local status can advance before centrix acknowledges its callback.
 
 ## P1 - Differentiators
 
@@ -175,3 +178,4 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 - **A - Frontend:** build the two-unit browser demo, then connect manager invoice approval. Own the browser rehearsal and pitch.
 - **B - Backend:** support the two-unit rehearsal and verify that both timelines follow one consented job and booking. See the [connector contract](connector-spec.md).
 - **C - Integrations:** verify live n8n and the configured OpenAI model path. Pair with A on dictation verification, then implement the simulated text-message outbox and booking link.
+- **C — Connector documentation:** add the [HeatFix callback recovery wording](assumptions.md) to the callback section of the connector spec.

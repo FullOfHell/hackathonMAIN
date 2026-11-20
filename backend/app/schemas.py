@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-IssueType = Literal["heating_repair"]
+IssueType = Annotated[str, Field(max_length=64, pattern=r"^[a-z][a-z0-9_]*$")]
 Urgency = Literal["low", "normal", "high"]
 Channel = Literal["portal_chat", "voice", "email", "manager"]
 

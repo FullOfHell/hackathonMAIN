@@ -82,19 +82,25 @@ def create_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> d
 
 
 def dispatch_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> dict:
-    webhook_url = os.getenv("N8N_CASE_WEBHOOK_URL", "").strip()
+    connector_webhook = os.getenv("N8N_CONNECTOR_WEBHOOK_URL", "").strip()
+    # The legacy export has a fixed HeatFix target. Other providers must never use it.
+    legacy_webhook = os.getenv("N8N_CASE_WEBHOOK_URL", "").strip() if partner["id"] == "p_heatfix" else ""
+    webhook_url = connector_webhook or legacy_webhook
     if not webhook_url:
         return create_job(client, partner, job)
 
     secret = os.getenv("N8N_WEBHOOK_SECRET", "").strip()
     if not secret:
         raise DispatchUnconfirmed("N8N_WEBHOOK_SECRET is missing")
+    event = {"event": "maintenance.sharing_approved", "case_id": job.request_id}
+    if not connector_webhook:
+        event["order"] = job.model_dump()
 
     try:
         response = client.post(
             webhook_url,
             headers={"X-N8N-Webhook-Secret": secret},
-            json={"event": "maintenance.sharing_approved", "case_id": job.request_id, "order": job.model_dump()},
+            json=event,
             follow_redirects=False,
         )
         response.raise_for_status()
