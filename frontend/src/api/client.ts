@@ -27,7 +27,7 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     cache: init?.method === 'POST' ? 'default' : 'no-store',
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: init?.headers ?? (init?.body ? { 'Content-Type': 'application/json' } : undefined),
   })
   if (!response.ok) {
     const failure = await response.json().catch(() => null)
@@ -44,6 +44,12 @@ export const api = {
 
   extractIntake: (draft: IntakeRequest): Promise<IntakeResponse> => request('/api/intake/extract', {
     method: 'POST', body: JSON.stringify(draft), signal: AbortSignal.timeout(6500),
+  }),
+
+  transcriptionStatus: (): Promise<{ enabled: boolean }> => request('/api/intake/transcription'),
+
+  transcribeRecording: (audio: Blob): Promise<{ text: string }> => request('/api/intake/transcription', {
+    method: 'POST', body: audio, headers: { 'Content-Type': audio.type }, signal: AbortSignal.timeout(25000),
   }),
 
   createCase: async (body: CreateCaseRequest): Promise<MaintenanceCase> =>
