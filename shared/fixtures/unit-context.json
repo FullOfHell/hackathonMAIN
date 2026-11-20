@@ -1,0 +1,36 @@
+{
+  "unit_id": "unit_4b",
+  "property": {
+    "id": "property_aachen_12",
+    "address": "Musterstrasse 12, 52062 Aachen",
+    "building_year": 1972,
+    "heating_type": "gas central heating"
+  },
+  "unit": {
+    "label": "4B",
+    "floor": 2,
+    "size_sqm": 68,
+    "rooms": 3
+  },
+  "resident": {
+    "id": "resident_lena",
+    "name": "Lena Hoffmann",
+    "email": "lena@example.com",
+    "phone": "+49 151 00000000",
+    "preferred_contact": "portal"
+  },
+  "previous_cases": [
+    {
+      "id": "case_previous_heating",
+      "issue_type": "heating_repair",
+      "summary": "Low boiler pressure reported and resolved",
+      "status": "CLOSED",
+      "closed_at": "2026-11-06T10:30:00Z"
+    }
+  ],
+  "access": {
+    "caretaker_available": true,
+    "key_safe_available": true,
+    "key_safe_code_shared": false
+  }
+}

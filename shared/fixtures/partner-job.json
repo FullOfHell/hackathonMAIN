@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "request_id": "case_001",
+  "idempotency_key": "case_001-heating-v1",
+  "service_type": "heating_repair",
+  "property": {
+    "address": "Musterstrasse 12, 52062 Aachen",
+    "unit": "4B",
+    "heating_type": "gas central heating"
+  },
+  "issue": {
+    "description": "The radiators have been cold since last night.",
+    "symptoms": ["radiators_cold"],
+    "priority": "high"
+  },
+  "resident": {
+    "name": "Lena Hoffmann",
+    "contact": "lena@example.com"
+  },
+  "sharing": {
+    "approved_fields": ["name", "contact", "address", "unit", "heating_type", "issue"],
+    "approved_at": "2026-11-20T15:47:00Z",
+    "channel": "portal"
+  },
+  "callback_url": "https://demo.example/api/integrations/partner-events"
+}

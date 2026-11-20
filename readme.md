@@ -41,6 +41,25 @@ The prototype uses synthetic residents, properties, partners, and documents. It 
 
 The detailed folder layout and API contracts are defined in the project plan. Add runnable setup commands here as soon as the first application skeleton is merged; do not invent commands for components that do not exist yet.
 
+## Frontend development
+
+The fixture-backed React and TypeScript application is in `frontend/`.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Before opening a pull request, run:
+
+```bash
+npm run lint
+npm run build
+```
+
+Shared frontend, backend and integration fixtures are stored in `shared/fixtures/`. Treat their shape as a team contract.
+
 ## Three-person workflow
 
 - Create short-lived branches such as `frontend/tenant-flow`, `backend/case-api`, or `integration/partner-connector`.

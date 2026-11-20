@@ -1,0 +1,10 @@
+{
+  "unit_id": "unit_4b",
+  "resident_id": "resident_lena",
+  "issue_type": "heating_repair",
+  "description": "The radiators have been cold since last night.",
+  "symptoms": ["radiators_cold"],
+  "urgency": "high",
+  "availability_preferences": ["weekday_morning"],
+  "source_channel": "portal_chat"
+}
