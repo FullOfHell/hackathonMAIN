@@ -2,14 +2,17 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
 from app.api.cases import router as cases_router  # noqa: E402
+from app.api.partner_events import router as partner_events_router  # noqa: E402
 from app.db import init_db  # noqa: E402
 from app.partners.heatfix import router as heatfix_router  # noqa: E402
+from app.states import InvalidTransition  # noqa: E402
 
 
 @asynccontextmanager
@@ -26,4 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(cases_router)
+app.include_router(partner_events_router)
 app.include_router(heatfix_router)
+
+
+@app.exception_handler(InvalidTransition)
+async def invalid_transition(_request: Request, exc: InvalidTransition):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})

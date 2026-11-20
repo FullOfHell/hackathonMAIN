@@ -113,6 +113,7 @@ def test_n8n_dispatch_retries_after_lost_acknowledgment(client, monkeypatch):
         retry = client.post(approval_url, json=approval)
         assert retry.status_code == 200, retry.text
         assert client.post(approval_url, json=approval).json()["partner_job_id"] == job_ids[0]
+    client.app.dependency_overrides[get_partner_client] = lambda: client
 
     jobs = client.get("/partners/heatfix/connector/jobs").json()
     assert len(jobs) == 1
@@ -122,6 +123,15 @@ def test_n8n_dispatch_retries_after_lost_acknowledgment(client, monkeypatch):
     assert attempts[0] == attempts[1]
     events = client.get(f"/api/cases/{case_id}/events").json()
     assert [event["type"] for event in events].count("partner.job_requested") == 1
+
+    job_url = f"/partners/heatfix/connector/jobs/{job_ids[0]}"
+    assert client.post(f"{job_url}/accept").status_code == 200
+    assert client.post(f"{job_url}/offer-slots").status_code == 200
+    offered = client.get(f"/api/cases/{case_id}").json()
+    booking = client.post(f"/api/cases/{case_id}/select-slot",
+                          json={"slot_id": offered["slots"][0]["slot_id"], "resident_id": offered["resident_id"]})
+    assert booking.status_code == 200, booking.text
+    assert booking.json()["status"] == "SCHEDULED"
 
 
 def test_missing_required_field_rejected(client):

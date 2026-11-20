@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS cases (
   resident_id TEXT NOT NULL REFERENCES residents(id), issue_type TEXT NOT NULL,
   description TEXT NOT NULL, symptoms TEXT NOT NULL DEFAULT '[]', urgency TEXT NOT NULL,
   status TEXT NOT NULL, partner_id TEXT REFERENCES partners(id), partner_job_id TEXT,
-  source_channel TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  source_channel TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  availability_preferences TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS case_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
@@ -41,10 +42,29 @@ CREATE TABLE IF NOT EXISTS sharing_approvals (
   partner_id TEXT NOT NULL, shared_fields TEXT NOT NULL, channel TEXT NOT NULL,
   approved_by TEXT NOT NULL, recorded_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS processed_partner_events (
+  event_id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
+  job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS appointment_slots (
+  case_id TEXT NOT NULL REFERENCES cases(id), slot_id TEXT NOT NULL,
+  start TEXT NOT NULL, end TEXT NOT NULL, PRIMARY KEY (case_id, slot_id)
+);
+CREATE TABLE IF NOT EXISTS appointments (
+  case_id TEXT PRIMARY KEY REFERENCES cases(id), slot_id TEXT NOT NULL, booked_at TEXT NOT NULL,
+  FOREIGN KEY (case_id, slot_id) REFERENCES appointment_slots(case_id, slot_id)
+);
 -- Simulated partner-side storage (stands in for the contractor's own system).
 CREATE TABLE IF NOT EXISTS partner_jobs (
   id TEXT PRIMARY KEY, partner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
   request_id TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, received_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS heatfix_callbacks (
+  job_id TEXT NOT NULL REFERENCES partner_jobs(id), type TEXT NOT NULL,
+  payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (job_id, type)
+);
+CREATE TABLE IF NOT EXISTS heatfix_bookings (
+  job_id TEXT PRIMARY KEY REFERENCES partner_jobs(id), slot_id TEXT NOT NULL
 );
 """
 
@@ -78,6 +98,9 @@ def init_db(seed: bool = True) -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        conn.execute("BEGIN IMMEDIATE")
+        if "availability_preferences" not in {col["name"] for col in conn.execute("PRAGMA table_info(cases)")}:
+            conn.execute("ALTER TABLE cases ADD COLUMN availability_preferences TEXT NOT NULL DEFAULT '[]'")
         if seed and conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
             load_seed(conn)
         conn.commit()
@@ -102,7 +125,8 @@ def load_seed(conn: sqlite3.Connection) -> None:
                       pa["base_url"], int(pa["active"])))
     for c in data["cases"]:
         conn.execute(
-            "INSERT INTO cases VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO cases (id,unit_id,resident_id,issue_type,description,symptoms,urgency,status,"
+            "partner_id,partner_job_id,source_channel,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (c["id"], c["unit_id"], c["resident_id"], c["issue_type"], c["description"], json.dumps(c["symptoms"]),
              c["urgency"], c["status"], c.get("partner_id"), c.get("partner_job_id"), c["source_channel"],
              c["created_at"], c["updated_at"]))

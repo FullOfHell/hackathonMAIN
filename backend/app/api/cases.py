@@ -1,14 +1,15 @@
 """centrix stand-in API (plan §5)."""
 import json
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.db import get_db, now_iso
-from app.integrations.connector import N8nDispatchError, build_job_request, dispatch_job, get_partner_client
+from app.integrations.connector import N8nDispatchError, book_slot, build_job_request, dispatch_job, get_partner_client
 from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
-                         SharingApprovalIn)
+                         ResidentSlotChoice, SharingApprovalIn)
 from app.services import cases as svc
-from app.states import CaseStatus, InvalidTransition
+from app.states import CaseStatus, check_transition
 
 router = APIRouter(prefix="/api", tags=["centrix"])
 
@@ -43,6 +44,7 @@ def get_unit_context(unit_id: str, conn=Depends(get_db)):
 
 @router.get("/units/{unit_id}/cases")
 def get_unit_cases(unit_id: str, conn=Depends(get_db)):
+    conn.execute("BEGIN")
     return [svc.get_case(conn, r["id"]) for r in
             conn.execute("SELECT id FROM cases WHERE unit_id=? ORDER BY created_at DESC", (unit_id,))]
 
@@ -55,9 +57,12 @@ def create_case(body: CaseCreate, conn=Depends(get_db)):
     if body.resident_id not in {r["id"] for r in ctx["residents"]}:
         raise HTTPException(422, "resident does not belong to unit")
     case_id, ts = svc.new_case_id(), now_iso()
-    conn.execute("INSERT INTO cases VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    conn.execute("INSERT INTO cases (id,unit_id,resident_id,issue_type,description,symptoms,urgency,status,"
+                 "partner_id,partner_job_id,source_channel,created_at,updated_at,availability_preferences) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                  (case_id, body.unit_id, body.resident_id, body.issue_type, body.description, json.dumps(body.symptoms),
-                  body.urgency, CaseStatus.REPORTED.value, None, None, body.source_channel, ts, ts))
+                  body.urgency, CaseStatus.REPORTED.value, None, None, body.source_channel, ts, ts,
+                  json.dumps(body.availability_preferences)))
     svc.record_event(conn, case_id, "maintenance.case_created", f"resident:{body.resident_id}",
                      {"channel": body.source_channel, "issue_type": body.issue_type, "unit_id": body.unit_id})
     svc.transition(conn, case_id, CaseStatus.TRIAGED, "system")
@@ -74,6 +79,7 @@ def create_case(body: CaseCreate, conn=Depends(get_db)):
 
 @router.get("/cases/{case_id}")
 def get_case(case_id: str, conn=Depends(get_db)):
+    conn.execute("BEGIN")
     return _with_sharing_request(conn, _case_or_404(conn, case_id))
 
 
@@ -101,11 +107,8 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         return _with_sharing_request(conn, case)
 
     if not case["sharing_approval"]:
-        try:
-            svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
-                           {"partner_id": case["partner_id"]})
-        except InvalidTransition as e:
-            raise HTTPException(409, str(e))
+        svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
+                       {"partner_id": case["partner_id"]})
         conn.execute("INSERT INTO sharing_approvals (case_id,partner_id,shared_fields,channel,approved_by,recorded_at) "
                      "VALUES (?,?,?,?,?,?)", (case_id, case["partner_id"], json.dumps(sorted(body.approved_fields)),
                                                body.channel, body.approved_by, now_iso()))
@@ -142,3 +145,50 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
                           "duplicate": result.get("duplicate", False), "idempotency_key": job.idempotency_key})
     conn.commit()
     return svc.get_case(conn, case_id)
+
+
+def _already_booked(case: dict, slot_id: str) -> bool:
+    if case["appointment"] is None:
+        return False
+    if case["appointment"]["slot_id"] != slot_id:
+        raise HTTPException(409, "a different slot is already booked")
+    return True
+
+
+@router.post("/cases/{case_id}/select-slot")
+def select_slot(case_id: str, body: ResidentSlotChoice, conn=Depends(get_db),
+                partner_client=Depends(get_partner_client)):
+    with conn:
+        conn.execute("BEGIN")
+        case = _case_or_404(conn, case_id)
+    if body.resident_id != case["resident_id"]:
+        raise HTTPException(403, "only the reporting resident can select a slot")
+    if not any(slot["slot_id"] == body.slot_id for slot in case["slots"]):
+        raise HTTPException(422, "slot was not offered for this case")
+    if _already_booked(case, body.slot_id):
+        return case
+
+    check_transition(CaseStatus(case["status"]), CaseStatus.SCHEDULED)
+    partner = conn.execute("SELECT base_url FROM partners WHERE id=?", (case["partner_id"],)).fetchone()
+    # The partner owns the booking and can safely repeat its confirmation after a timeout.
+    try:
+        book_slot(partner_client, partner["base_url"], case["partner_job_id"], body.slot_id)
+    except (httpx.HTTPError, ValueError) as exc:
+        partner_status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+        with conn:
+            svc.record_event(conn, case_id, "partner.booking_unconfirmed", f"resident:{body.resident_id}",
+                             {"job_id": case["partner_job_id"], "slot_id": body.slot_id, "partner_status": partner_status})
+        if partner_status in (409, 422):
+            raise HTTPException(partner_status, "partner declined this slot") from exc
+        raise HTTPException(502, "partner did not confirm the booking") from exc
+
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        case = _case_or_404(conn, case_id)
+        if _already_booked(case, body.slot_id):
+            return case
+        svc.transition(conn, case_id, CaseStatus.SCHEDULED, f"resident:{body.resident_id}",
+                       {"job_id": case["partner_job_id"], "slot_id": body.slot_id})
+        conn.execute("INSERT INTO appointments (case_id,slot_id,booked_at) VALUES (?,?,?)",
+                     (case_id, body.slot_id, now_iso()))
+        return svc.get_case(conn, case_id)

@@ -10,17 +10,17 @@ This checklist turns the project plan into an execution order for the three-pers
   - B - Backend/Domain: FastAPI, SQLite, state machine and tests.
   - C - AI/Integrations: extraction, partner connector, n8n and connector documentation.
 - [ ] Freeze shared contracts for unit context, case creation, case states, partner jobs and callbacks.
-- [ ] Commit representative JSON fixtures used by all three contributors.
+- [x] Commit representative JSON fixtures used by all three contributors.
 - [ ] Create `frontend/`, `backend/`, `n8n/` and test directories.
-- [ ] Add `.gitignore`, `.env.example` and initial development commands.
+- [x] Add `.gitignore`, `.env.example` and initial development commands.
 - [ ] Create short-lived branches for each contributor's first slice.
 
 ## P0 - Core backend
 
-- [ ] Create the FastAPI application and configure SQLite.
+- [x] Create the FastAPI application and configure SQLite.
 - [ ] Model property, unit, resident, maintenance case and immutable case events.
 - [ ] Model sharing approval, partner job, appointment, completion report and invoice document.
-- [ ] Seed one fictional property, resident, prior heating case and active contractor.
+- [x] Seed one fictional property, resident, prior heating case and active contractor.
 - [ ] Implement and validate the main state sequence:
   - `REPORTED`
   - `TRIAGED`
@@ -32,12 +32,12 @@ This checklist turns the project plan into an execution order for the three-pers
   - `COMPLETED`
   - `CLOSED`
 - [ ] Support explicit failure states without arbitrary transitions.
-- [ ] Record every transition with actor and timestamp.
-- [ ] Implement `GET /api/units/{unit_id}/context`.
-- [ ] Implement case creation, retrieval and event-history endpoints.
-- [ ] Implement sharing approval and slot-selection endpoints.
-- [ ] Implement the partner-event callback endpoint.
-- [ ] Verify cases and timelines survive a backend restart.
+- [x] Record every transition with actor and timestamp.
+- [x] Implement `GET /api/units/{unit_id}/context`.
+- [x] Implement case creation, retrieval and event-history endpoints.
+- [x] Implement sharing approval and slot-selection endpoints.
+- [x] Implement the partner-event callback endpoint.
+- [x] Verify cases and timelines survive a backend restart.
 
 ## P0 - First vertical slice
 
@@ -50,11 +50,11 @@ Target milestone:
 - [ ] Ask only for missing information.
 - [ ] Display an editable issue summary before submission.
 - [ ] Show the exact fields that will be shared with the partner.
-- [ ] Require explicit approval and persist the approval record.
-- [ ] Create the generic connector interface.
-- [ ] Implement the simulated HeatFix partner.
+- [x] Require explicit approval and persist the approval record.
+- [x] Create the generic connector interface.
+- [x] Implement the simulated HeatFix partner.
 - [ ] Route the approved case through n8n.
-- [ ] Add an idempotency key so retries cannot create duplicate jobs.
+- [x] Add an idempotency key so retries cannot create duplicate jobs.
 - [ ] Display the received job in a basic partner dashboard.
 - [ ] Test retrying the same submission.
 
@@ -62,11 +62,11 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - Complete the repair loop
 
-- [ ] Let the partner accept or reject a job.
-- [ ] Let the partner offer appointment slots.
+- [x] Let the partner accept or reject a job.
+- [x] Let the partner offer appointment slots.
 - [ ] Display slots in the tenant portal.
-- [ ] Require tenant confirmation before booking.
-- [ ] Persist the selected appointment.
+- [x] Require tenant confirmation before booking.
+- [x] Persist the selected appointment.
 - [ ] Let the partner mark work in progress and completed.
 - [ ] Attach a synthetic repair report and invoice.
 - [ ] Link the appointment, completion and invoice to the original case and unit.
@@ -86,30 +86,30 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - Connector quality and security
 
-- [ ] Version the connector schema.
-- [ ] Document required and optional partner fields.
-- [ ] Add signed or shared-secret partner callbacks.
-- [ ] Reject invalid callback signatures.
-- [ ] Deduplicate repeated callback events.
+- [x] Version the connector schema.
+- [x] Document required and optional partner fields.
+- [x] Add signed or shared-secret partner callbacks.
+- [x] Reject invalid callback signatures.
+- [x] Deduplicate repeated callback events.
 - [ ] Define timeout, rejection and unavailable-provider behavior.
-- [ ] Trace every request and callback to the original case.
-- [ ] Create `Docs/connector-spec.md`.
+- [x] Trace every request and callback to the original case.
+- [x] Create `Docs/connector-spec.md`.
 - [ ] Export n8n workflows without credentials.
 - [ ] Keep all tokens and secrets in environment variables.
 
 ## P0 - Tests and demo readiness
 
 - [ ] Test case creation and correct unit association.
-- [ ] Test persistence across backend restarts.
+- [x] Test persistence across backend restarts.
 - [ ] Test approval records and shared fields.
 - [ ] Test duplicate partner-job submission.
-- [ ] Test slot selection and appointment persistence.
-- [ ] Test valid and invalid state transitions.
-- [ ] Test duplicate and invalid partner callbacks.
+- [x] Test slot selection and appointment persistence.
+- [x] Test valid and invalid state transitions.
+- [x] Test duplicate and invalid partner callbacks.
 - [ ] Test repair completion and invoice linking.
 - [ ] Test unavailable-provider escalation.
 - [ ] Rehearse the entire typed workflow repeatedly.
-- [ ] Add real startup commands to `readme.md`.
+- [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
 
