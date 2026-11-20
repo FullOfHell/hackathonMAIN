@@ -26,7 +26,8 @@ def build_job_request(case: dict, ctx: dict, resident: dict, approval: dict) -> 
         prop["heating_type"] = ctx["property"]["heating"]
     if "access_details" in fields:
         prop["access_details"] = ctx["property"]["access_details"]
-    issue = {"description": case["description"], "symptoms": case["symptoms"], "priority": case["urgency"]}
+    issue = {"description": case["description"], "symptoms": case["symptoms"], "priority": case["urgency"],
+             "availability_preferences": case["availability_preferences"]}
     if "prior_heating_case" in fields:
         prior = [p for p in ctx["prior_heating_cases"] if p["id"] != case["id"]]
         if prior:
@@ -53,3 +54,16 @@ def create_job(client: httpx.Client, partner: dict, job: PartnerJobRequest) -> d
     resp = client.post(f"{partner['base_url']}/connector/jobs", json=job.model_dump())
     resp.raise_for_status()
     return resp.json()
+
+
+def book_slot(client: httpx.Client, partner_url: str, job_id: str, slot_id: str) -> None:
+    response = client.post(f"{partner_url}/connector/jobs/{job_id}/book", json={"slot_id": slot_id})
+    response.raise_for_status()
+    confirmation = response.json()
+    expected = {"job_id": job_id, "slot_id": slot_id, "status": "scheduled"}
+    if not isinstance(confirmation, dict) or any(confirmation.get(key) != value for key, value in expected.items()):
+        raise ValueError("partner did not confirm the requested booking")
+
+
+def partner_webhook_secret() -> str:
+    return os.getenv("PARTNER_WEBHOOK_SECRET") or "dev-partner-secret"

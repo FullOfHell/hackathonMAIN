@@ -4,6 +4,7 @@
   "issue_type": "heating_repair",
   "description": "No heat since last night, radiators are cold.",
   "symptoms": ["radiators_cold"],
+  "availability_preferences": ["Weekday mornings"],
   "urgency": "high",
   "source_channel": "portal_chat"
 }

@@ -12,7 +12,8 @@
   "issue": {
     "description": "No heat since last night, radiators are cold.",
     "symptoms": ["radiators_cold"],
-    "priority": "high"
+    "priority": "high",
+    "availability_preferences": ["Weekday mornings"]
   },
   "resident": {
     "name": "Lena Hoffmann",

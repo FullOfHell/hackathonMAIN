@@ -8,3 +8,6 @@ The prototype simulates centrix and the partner. It is not connected to the real
 - **Routing:** deterministic: service type, then region, then active; tie-break by name. A second partner (Köln) exists in seed data to show region filtering.
 - **Data sharing:** only fields the resident approves are sent. `address`, `unit` and `issue` are required for a repair job; name, contact, heating type, access details and prior heating case are optional.
 - **Access details:** the key-safe code is never shared automatically; the property manager releases it after booking.
+- **Availability and consent.** Availability preferences are part of the approved issue description. They are free text for the contractor. HeatFix generates two demo windows on the next UTC calendar day, 08:00–10:00 and 14:00–16:00 UTC. The portal can display them in the resident's time zone.
+- **Booking.** Each job can have one appointment. The reporting resident confirms an offered slot using the synthetic resident ID, as in the sharing-approval flow. The mock keeps its own booking and confirms it over HTTP before centrix records the appointment.
+- **Local callback secret.** The demo uses `dev-partner-secret` when the environment setting is absent or empty, including older local environment files. Both the sender and receiver read the configured value when present.

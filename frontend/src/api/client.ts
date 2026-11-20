@@ -36,7 +36,7 @@ export const api = {
           method: 'POST',
           body: JSON.stringify(body),
         })
-      : waitForFixture({ ...caseFixture, ...body }),
+      : waitForFixture({ ...caseFixture, ...body, availability_preferences: body.availability_preferences ?? [] }),
 
   approveSharing: async (
     caseId: string,

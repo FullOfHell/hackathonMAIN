@@ -54,6 +54,7 @@ export interface CreateCaseRequest {
   issue_type: 'heating_repair'
   description: string
   symptoms: string[]
+  availability_preferences?: string[]
   urgency: Urgency
   source_channel: Channel
 }
@@ -81,8 +82,17 @@ export interface SharingRequest {
   shareable_fields: string[]
 }
 
+export interface AppointmentSlot {
+  slot_id: string
+  start: string
+  end: string
+}
+
 export interface MaintenanceCase extends CreateCaseRequest {
   id: string
+  availability_preferences: string[]
+  slots: AppointmentSlot[]
+  appointment: (AppointmentSlot & { case_id: string; booked_at: string }) | null
   status: CaseStatus
   partner_id: string | null
   partner_job_id: string | null
@@ -107,7 +117,7 @@ export interface PartnerJob {
   idempotency_key: string
   service_type: 'heating_repair'
   property: Record<string, string>
-  issue: { description: string; symptoms: string[]; priority: Urgency }
+  issue: { description: string; symptoms: string[]; priority: Urgency; availability_preferences: string[] }
   resident: {
     name?: string
     contact?: { email: string; phone: string }
