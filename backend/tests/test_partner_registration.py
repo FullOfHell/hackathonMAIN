@@ -115,6 +115,10 @@ def test_internet_partner_uses_same_approval_and_booking_flow(client, monkeypatc
     assert client.get(f"{HEATFIX_JOBS}/{job['id']}").status_code == 404
     job_url = f"{INTERNET_JOBS}/{job['id']}"
     assert client.post(job_url + "/accept").status_code == 200
+    accepted, = [event for event in client.get(case_url + "/events").json() if event["type"] == "partner.accepted"]
+    retry_path = f"/{job['id']}/callbacks/{accepted['payload']['event_id']}/retry"
+    assert client.post(HEATFIX_JOBS + retry_path).status_code == 404
+    assert client.post(INTERNET_JOBS + retry_path).status_code == 200
     offer = client.post(job_url + "/offer-slots")
     assert offer.status_code == 200, offer.text
     slot = offer.json()["slots"][0]

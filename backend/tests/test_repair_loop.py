@@ -1,6 +1,8 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
 import httpx
 import pytest
@@ -197,9 +199,14 @@ def test_unconfirmed_callback_stays_pending_until_matching_receipt(client, appro
     ))) as wrong:
         app.dependency_overrides[get_callback_client] = lambda: wrong
         assert client.post(url + "/accept").status_code == 502
+        pending = client.get(url).json()["pending_callback"]
+        assert pending["type"] == "accepted"
+        retry_url = f"{url}/callbacks/{pending['event_id']}/retry"
+        assert client.post(retry_url).status_code == 502
+        assert client.get(url).json()["pending_callback"] == pending
         assert client.post(url + "/offer-slots").status_code == 409
     app.dependency_overrides[get_callback_client] = lambda: client
-    assert client.post(url + "/accept").status_code == 200
+    assert client.post(retry_url).json()["pending_callback"] is None
     assert sum(e["type"] == "partner.accepted" for e in client.get(case_url(approved) + "/events").json()) == 1
 
 
@@ -258,6 +265,115 @@ def scheduled(client, offered):
     response = select(client, offered, offered["slots"][0]["slot_id"])
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.parametrize(("action", "kind", "target", "lost_after_commit"), [
+    ("complete", "completion_report", "COMPLETED", False),
+    ("invoice", "invoice", "CLOSED", True),
+])
+def test_recover_document_callback_after_restart(client, scheduled, action, kind, target, lost_after_commit):
+    jobs_url = "/partners/heatfix/connector/jobs"
+    url, case = job_url(scheduled), case_url(scheduled)
+    _, complete, invoice = load("partner-repair-events.json")
+    assert client.post(url + "/start").is_success
+    command = complete if action == "complete" else invoice
+    if action == "invoice":
+        assert client.post(url + "/complete", json=complete["data"]).is_success
+    assert client.get(jobs_url).json()[0]["pending_callback"] is None
+    assert client.get(url).json()["pending_callback"] is None
+
+    original = {}
+
+    def fail_delivery(request):
+        original.update(json.loads(request.content))
+        assert original["data"] == command["data"] and request.headers["X-Partner-Secret"] == HEADER["X-Partner-Secret"]
+        if lost_after_commit:
+            receipt = client.post(CALLBACK, json=original, headers=HEADER)
+            assert receipt.json() == {"event_id": original["event_id"], "duplicate": False}
+            raise httpx.ReadTimeout("reply lost after centrix committed")
+        raise httpx.ConnectError("centrix unavailable before delivery")
+
+    with httpx.Client(transport=httpx.MockTransport(fail_delivery)) as offline:
+        app.dependency_overrides[get_callback_client] = lambda: offline
+        assert client.post(url + "/" + action, json=command["data"]).status_code == 502
+    snapshot = client.get(case).json()
+    assert (snapshot["status"] == target) == lost_after_commit
+    assert (snapshot[kind] is not None) == lost_after_commit
+    event_id = original["event_id"]
+    pending = {"event_id": event_id, "type": command["type"]}
+    retry_url = f"{url}/callbacks/{event_id}/retry"
+    assert client.get(url).json()["pending_callback"] == pending
+
+    with TestClient(app) as restarted:
+        assert restarted.get(jobs_url).json()[0]["pending_callback"] == pending
+        assert restarted.get(url).json()["pending_callback"] == pending
+        assert restarted.post(CALLBACK, json=original).status_code == 401
+        assert restarted.get(case).json() == snapshot
+
+        both_sending = Barrier(2, timeout=10)
+        receipts = []
+
+        def deliver(request):
+            assert str(request.url) == "http://testserver" + CALLBACK
+            assert json.loads(request.content) == original
+            assert request.headers["X-Partner-Secret"] == HEADER["X-Partner-Secret"]
+            both_sending.wait()
+            ack = restarted.post(CALLBACK, content=request.content, headers=request.headers)
+            assert ack.status_code == 200 and ack.json()["event_id"] == event_id
+            receipts.append(ack.json()["duplicate"])
+            return httpx.Response(200, json=ack.json())
+
+        with httpx.Client(transport=httpx.MockTransport(deliver)) as recovered:
+            app.dependency_overrides[get_callback_client] = lambda: recovered
+            with ThreadPoolExecutor(2) as pool:
+                replies = list(pool.map(lambda _: restarted.post(retry_url), range(2)))
+            job = restarted.get(url).json()
+            assert all(r.status_code == 200 and r.json() == job for r in replies)
+            assert job["pending_callback"] is None
+            assert restarted.get(jobs_url).json()[0]["pending_callback"] is None
+            assert restarted.post(retry_url).json() == job
+        assert sorted(receipts) == [lost_after_commit, True]
+        final = restarted.get(case).json()
+        assert final["status"] == target
+        assert {k: final[kind][k] for k in command["data"]} == command["data"]
+        transitions = [e["payload"] for e in restarted.get(case + "/events").json()
+                       if e["type"] == "case.status_changed" and e["payload"]["to"] == target]
+        assert [t["event_id"] for t in transitions] == [event_id]
+        with closing(connect()) as conn:
+            docs = conn.execute("SELECT event_id FROM case_documents WHERE case_id=? AND kind=?",
+                                (scheduled["id"], kind)).fetchall()
+            assert [doc["event_id"] for doc in docs] == [event_id]
+
+
+def test_retry_requires_matching_job_event_and_empty_input(client, offered):
+    url = job_url(offered)
+    # The prior acceptance is acknowledged even when a newer callback is pending.
+    accepted = next(e["payload"]["event_id"] for e in client.get(case_url(offered) + "/events").json()
+                    if e["type"] == "partner.accepted")
+    other = client.post("/partners/heatfix/connector/jobs", json=load("partner-job.json")).json()["job_id"]
+    requests = []
+
+    def unavailable(request):
+        requests.append(request)
+        return httpx.Response(503)
+
+    with httpx.Client(transport=httpx.MockTransport(unavailable)) as offline:
+        app.dependency_overrides[get_callback_client] = lambda: offline
+        assert client.post(url + "/fail", json={"reason": ""}).status_code == 422
+        assert client.get(url).json()["pending_callback"] is None
+        assert client.post(url + "/fail", json={"reason": "Demo contractor unavailable"}).status_code == 502
+        job = client.get(url).json()
+        pending = job["pending_callback"]
+        retry = f"/callbacks/{pending['event_id']}/retry"
+        assert client.post(url + retry, json={"data": {"reason": "replacement"}}).status_code == 422
+        assert client.post(url + "/callbacks/unknown/retry").status_code == 404
+        assert client.post("/partners/heatfix/connector/jobs/missing" + retry).status_code == 404
+        assert client.post(f"/partners/heatfix/connector/jobs/{other}" + retry).status_code == 404
+        assert client.post(f"{url}/callbacks/{accepted}/retry", json={}).json() == job
+        assert len(requests) == 1
+    jobs = {j["id"]: j for j in client.get("/partners/heatfix/connector/jobs").json()}
+    assert jobs[other]["pending_callback"] is None
+    assert jobs[offered["partner_job_id"]]["pending_callback"] == pending
 
 
 def test_repair_closes_on_the_original_unit_and_survives_restart(client, scheduled):

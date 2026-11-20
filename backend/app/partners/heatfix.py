@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 
 from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
@@ -55,10 +55,25 @@ def create_job(job: PartnerJobRequest, response: Response, partner: DeliveryPart
     return {"job_id": job_id, "status": "received", "duplicate": False}
 
 
+# HeatFix persists at most one unacknowledged callback per job.
+PENDING_CALLBACK = ("(SELECT payload FROM heatfix_callbacks WHERE job_id=j.id AND delivered=0) "
+                    "AS pending_callback")
+
+
+def _job_from_row(row):
+    job = dict(row)
+    job["payload"] = json.loads(job["payload"])
+    if job["pending_callback"] is not None:
+        event = json.loads(job["pending_callback"])
+        job["pending_callback"] = {"event_id": event["event_id"], "type": event["type"]}
+    return job
+
+
 @router.get("/connector/jobs")
 def list_jobs(partner: DeliveryPartner, conn=Depends(get_db)):
-    return [{**dict(j), "payload": json.loads(j["payload"])}
-            for j in conn.execute("SELECT * FROM partner_jobs WHERE partner_id=? ORDER BY received_at DESC", (partner["partner_id"],))]
+    rows = conn.execute(f"SELECT j.*, {PENDING_CALLBACK} FROM partner_jobs j "
+                        "WHERE j.partner_id=? ORDER BY j.received_at DESC", (partner["partner_id"],))
+    return [_job_from_row(row) for row in rows]
 
 
 @router.put("/connector/jobs/{job_id}/scope")
@@ -82,16 +97,15 @@ def set_building_scope(job_id: str, body: BuildingJobScope, partner: DeliveryPar
 @router.get("/connector/jobs/{job_id}")
 def get_job(job_id: str, partner: DeliveryPartner, conn=Depends(get_db)):
     row = conn.execute(
-        "SELECT j.*,o.payload AS offer,b.slot_id AS booked_slot_id FROM partner_jobs j "
+        f"SELECT j.*, {PENDING_CALLBACK}, o.payload AS offer,b.slot_id AS booked_slot_id FROM partner_jobs j "
         "LEFT JOIN heatfix_callbacks o ON o.job_id=j.id AND o.type='slots_offered' "
         "LEFT JOIN heatfix_bookings b ON b.job_id=j.id WHERE j.id=? AND j.partner_id=?",
         (job_id, partner["partner_id"])).fetchone()
     if not row:
         raise HTTPException(404, "job not found")
-    job = dict(row)
+    job = _job_from_row(row)
     offer = job.pop("offer")
     job["slots"] = json.loads(offer)["data"]["slots"] if offer else []
-    job["payload"] = json.loads(job["payload"])
     return job
 
 
@@ -110,19 +124,24 @@ def _demo_slots(job_id: str) -> list[dict]:
     return slots
 
 
+def _trusted_callback_url(job):
+    try:
+        url = httpx.URL(job["payload"]["callback_url"])
+    except httpx.InvalidURL as exc:
+        raise HTTPException(422, "invalid callback URL") from exc
+    trusted = httpx.URL(callback_url())
+    if (url.scheme, url.host, url.port) != (trusted.scheme, trusted.host, trusted.port) or url.userinfo:
+        raise HTTPException(422, "callback URL must use the configured centrix origin")
+    return url
+
+
 def _send_event(conn, client, job_id: str, partner: dict, event_type: str, data: dict | None = None):
     if event_type not in partner["events"]:
         raise HTTPException(422, "unsupported partner event")
     with conn:
         conn.execute("BEGIN IMMEDIATE")
         job = get_job(job_id, partner, conn)
-        try:
-            url = httpx.URL(job["payload"]["callback_url"])
-        except httpx.InvalidURL as exc:
-            raise HTTPException(422, "invalid callback URL") from exc
-        trusted = httpx.URL(callback_url())
-        if (url.scheme, url.host, url.port) != (trusted.scheme, trusted.host, trusted.port) or url.userinfo:
-            raise HTTPException(422, "callback URL must use the configured centrix origin")
+        url = _trusted_callback_url(job)
         previous = conn.execute("SELECT payload,delivered FROM heatfix_callbacks WHERE job_id=? AND type=?",
                                 (job_id, event_type)).fetchone()
         if previous:
@@ -144,7 +163,11 @@ def _send_event(conn, client, job_id: str, partner: dict, event_type: str, data:
                          (job_id, event_type, json.dumps(event)))
             conn.execute("UPDATE partner_jobs SET status=? WHERE id=?", (event_type, job_id))
 
-    # Commit the exact callback before delivery. A retry after a lost reply reuses its ID and slots.
+    return _deliver_callback(conn, client, url, event, partner)
+
+
+def _deliver_callback(conn, client, url, event, partner):
+    # Network I/O happens after the event is committed and outside any write transaction.
     try:
         response = client.post(url, json=event, headers={"X-Partner-Secret": partner_webhook_secret()},
                                follow_redirects=False)
@@ -155,8 +178,23 @@ def _send_event(conn, client, job_id: str, partner: dict, event_type: str, data:
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "retry this action because centrix did not acknowledge the callback") from exc
     with conn:
-        conn.execute("UPDATE heatfix_callbacks SET delivered=1 WHERE job_id=? AND type=?", (job_id, event_type))
-    return get_job(job_id, partner, conn)
+        conn.execute("UPDATE heatfix_callbacks SET delivered=1 WHERE job_id=? AND type=? AND delivered=0",
+                     (event["job_id"], event["type"]))
+    return get_job(event["job_id"], partner, conn)
+
+
+@router.post("/connector/jobs/{job_id}/callbacks/{event_id}/retry")
+def retry_callback(job_id: str, event_id: str, partner: DeliveryPartner, _body: dict = Body(default_factory=dict, max_length=0),
+                   conn=Depends(get_db), client=Depends(get_callback_client)):
+    job = get_job(job_id, partner, conn)
+    saved = conn.execute(
+        "SELECT payload,delivered FROM heatfix_callbacks WHERE job_id=? AND json_extract(payload,'$.event_id')=?",
+        (job_id, event_id)).fetchone()
+    if not saved:
+        raise HTTPException(404, "callback not found for this job")
+    if saved["delivered"]:
+        return job
+    return _deliver_callback(conn, client, _trusted_callback_url(job), json.loads(saved["payload"]), partner)
 
 
 @router.post("/connector/jobs/{job_id}/accept")
