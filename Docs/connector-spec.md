@@ -69,3 +69,63 @@ Linked timelines persist `building.repair_updated` on status changes. Shared clo
 | Direct dispatch refused or partner unreachable | The API returns 502 and records the failure and `NEEDS_HUMAN_REVIEW` on the case. |
 | Partner declines or cannot finish | Use `/reject` on a pending job, or `POST /partners/heatfix/connector/jobs/{job_id}/fail` with a `reason` while the job is active. The case records `DECLINED` or `FAILED`, respectively. |
 | Manager takes ownership | `POST /api/cases/{case_id}/escalate`, empty body, moves a `DECLINED`, `FAILED` or `NO_PROVIDER_AVAILABLE` case to `NEEDS_HUMAN_REVIEW`. Repeating the action returns the same case. Other states return 409. |
+
+## Adding an internet partner
+
+The backend registers and discovers a simulated FibreNet provider. Offer delivery and contract write-back below describe the proposed move-in workflow.
+
+Connector v1 supports two partner kinds with the same envelope, security and idempotency rules:
+
+| Kind | Example | Unit of work | Outcome written back to the unit |
+| --- | --- | --- | --- |
+| `delivery` | HeatFix (heating repair) | job → slots → booking → completion → invoice | appointment, repair report, invoice |
+| `offer` | an internet provider | offer → resident accepts → contract signed | `service_contract` (as in the brief's example payload) |
+
+### 1. Register the partner (capabilities)
+
+A partner publishes `GET {base_url}/connector/capabilities`:
+
+```json
+{
+  "schema_version": "1.0",
+  "partner_id": "p_fibrenet",
+  "kind": "offer",
+  "categories": ["internet"],
+  "regions": ["Aachen"],
+  "triggers": ["tenant.move_in"],
+  "required_fields": ["address", "unit", "move_in_date"],
+  "optional_fields": ["name", "contact"],
+  "events": ["offer_created", "contract_signed", "activation_scheduled", "failed"]
+}
+```
+
+To register a category, add a JSON file with `name`, `base_url` and `capabilities` to `backend/seed/partner-registrations/` and restart the demo backend. The SQLite registry exposes active matches through `GET /api/integrations/partners?category=internet&region=Aachen&trigger=tenant.move_in`. The demo provider publishes `GET /partners/fibrenet/connector/capabilities`. Keep callback secrets in the environment. The shared manifest is in [the FibreNet registration](../backend/seed/partner-registrations/fibrenet.json).
+
+### 2. Proposed trigger, consent and order
+
+1. centrix fires `tenant.move_in` for a unit (brief's example event).
+2. The resident sees the offer in the portal or as a text message, plus the exact fields to be shared (`address`, `unit`, `move_in_date`, optionally `name`, `contact`), and approves.
+3. centrix sends `POST {base_url}/connector/orders` with the same envelope as jobs: `request_id`, `idempotency_key`, `service_type: "internet"`, the approved fields, `sharing.approved_fields`, `callback_url`.
+
+### 3. Proposed callbacks and result
+
+The partner posts `offer_created`, `contract_signed`, `activation_scheduled` or `failed` to the same `POST /api/integrations/partner-events` endpoint, with the same `X-Partner-Secret`, event-ID deduplication and 401/404/409/422 rules as above. `contract_signed` writes a `service_contract` to the unit:
+
+```json
+{
+  "partner": "FibreNet Aachen",
+  "category": "internet",
+  "product": "Fibre 500",
+  "status": "signed",
+  "start": "2026-12-01",
+  "monthly_price_eur": 34.99,
+  "consent": { "data_shared": ["name", "address", "move_in_date"], "given_at": "2026-11-20T09:21:00Z", "channel": "portal" }
+}
+```
+
+### What a new partner must provide
+
+1. A capabilities document (kind, categories, regions, triggers, required/optional fields, events).
+2. An order or job endpoint that accepts the v1 envelope and is idempotent on `idempotency_key`.
+3. Signed callbacks to `callback_url` using only the documented event types.
+4. Only the fields the resident approved; nothing else is sent.
