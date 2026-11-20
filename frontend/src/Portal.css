@@ -53,7 +53,13 @@ input { accent-color: #942f1d; }
 .timeline { padding-left: 1.25rem; }
 .timeline li { padding-block: .2rem; }
 .timeline time { display: block; color: #6c554a; font-size: .85rem; }
+.case-progress { display: grid; gap: 1rem; margin-top: 1.25rem; }
+.case-progress > .inbox-heading h3 { margin: 0; }
+.appointment { background: #e7f0dd; color: #365121; border-radius: .6rem; padding: .8rem; }
+.appointment p { margin: .3rem 0 0; }
+.job > section { margin-top: 1rem; }
 
 @media (max-width: 680px) {
   .report-layout { grid-template-columns: 1fr; }
+  nav, .nav-links { flex-wrap: wrap; gap: .7rem; }
 }

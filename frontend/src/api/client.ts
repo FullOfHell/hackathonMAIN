@@ -1,8 +1,10 @@
 import { caseFixture, partnerJobFixture, unitContextFixture } from './fixtures'
+import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
 import type {
   CaseEvent,
   CreateCaseRequest,
   MaintenanceCase,
+  PartnerAction,
   PartnerInboxJob,
   SharingApprovalRequest,
   UnitContext,
@@ -12,6 +14,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
 export const isFixtureMode = !apiBaseUrl
 const demoCases = new Map<string, MaintenanceCase>()
 const demoJobs = new Map<string, PartnerInboxJob>()
+const demoEvents = new Map<string, CaseEvent[]>()
 
 const waitForFixture = async <T>(value: T): Promise<T> => {
   await new Promise((resolve) => window.setTimeout(resolve, 250))
@@ -24,7 +27,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   })
   if (!response.ok) {
-    throw new Error(`API request failed (${response.status})`)
+    const failure = await response.json().catch(() => null)
+    throw new Error(typeof failure?.detail === 'string' ? failure.detail : `API request failed (${response.status})`)
   }
   return response.json() as Promise<T>
 }
@@ -59,8 +63,12 @@ export const api = {
       events.push({ id: 2, case_id: caseId, type: 'partner.job_requested',
         actor: 'system', timestamp: demoCase.updated_at, payload: {} })
     }
-    return events
+    return [...events, ...(demoEvents.get(caseId) ?? [])]
   },
+
+  listUnitCases: (unitId: string): Promise<MaintenanceCase[]> =>
+    apiBaseUrl ? request('/api/units/' + encodeURIComponent(unitId) + '/cases')
+      : waitForFixture([...demoCases.values()].filter((item) => item.unit_id === unitId).reverse()),
 
   approveSharing: async (
     caseId: string,
@@ -76,6 +84,61 @@ export const api = {
   listPartnerJobs: async (): Promise<PartnerInboxJob[]> =>
     apiBaseUrl ? request('/partners/heatfix/connector/jobs')
       : waitForFixture([...demoJobs.values()].reverse()),
+
+  updatePartnerJob: (jobId: string, action: PartnerAction): Promise<PartnerInboxJob> =>
+    apiBaseUrl ? request('/partners/heatfix/connector/jobs/' + encodeURIComponent(jobId) + '/' + action, { method: 'POST' })
+      : updateDemoJob(jobId, action),
+
+  selectSlot: (caseId: string, slotId: string, residentId: string): Promise<MaintenanceCase> =>
+    apiBaseUrl ? request('/api/cases/' + encodeURIComponent(caseId) + '/select-slot', {
+      method: 'POST', body: JSON.stringify({ slot_id: slotId, resident_id: residentId }),
+    }) : bookDemoSlot(caseId, slotId, residentId),
+}
+
+function recordDemoEvent(caseId: string, actor: string, type: string, payload: Record<string, unknown>) {
+  const events = demoEvents.get(caseId) ?? []
+  demoEvents.set(caseId, [...events, { id: events.length + 3, case_id: caseId,
+    actor, type, timestamp: new Date().toISOString(), payload }])
+}
+
+async function updateDemoJob(jobId: string, action: PartnerAction): Promise<PartnerInboxJob> {
+  const job = demoJobs.get(jobId)
+  const item = job && demoCases.get(job.request_id)
+  if (!job || !item) throw new Error('Job unavailable.')
+  const status = { accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered' }[action]
+  if (job.status === status) return waitForFixture(job)
+  if (action === 'offer-slots' ? job.status !== 'accepted'
+    : job.status !== 'received' && !(action === 'reject' && job.status === 'accepted')) {
+    throw new Error('This action is unavailable for the current job status.')
+  }
+  const updated = { ...job, status }
+  demoJobs.set(jobId, updated)
+  if (action === 'accept') {
+    recordDemoEvent(item.id, 'partner:heatfix', 'partner.accepted', {})
+  } else {
+    const nextStatus = action === 'reject' ? 'DECLINED' : 'SLOTS_OFFERED'
+    demoCases.set(item.id, { ...item, status: nextStatus,
+      slots: action === 'offer-slots' ? partnerEventFixture.data.slots : [], updated_at: new Date().toISOString() })
+    recordDemoEvent(item.id, 'partner:heatfix', 'case.status_changed', { to: nextStatus })
+  }
+  return waitForFixture(updated)
+}
+
+async function bookDemoSlot(caseId: string, slotId: string, residentId: string): Promise<MaintenanceCase> {
+  const item = demoCases.get(caseId)
+  const slot = item?.slots.find((option) => option.slot_id === slotId)
+  if (!item || !slot || item.resident_id !== residentId || !item.partner_job_id) throw new Error('Slot unavailable.')
+  if (item.appointment?.slot_id === slotId) return waitForFixture(item)
+  if (item.status !== 'SLOTS_OFFERED') throw new Error('This case cannot be booked again.')
+  const job = demoJobs.get(item.partner_job_id)
+  if (!job) throw new Error('Job unavailable.')
+  const now = new Date().toISOString()
+  const booked: MaintenanceCase = { ...item, status: 'SCHEDULED', updated_at: now,
+    appointment: { ...slot, case_id: caseId, booked_at: now } }
+  demoCases.set(caseId, booked)
+  demoJobs.set(job.id, { ...job, status: 'scheduled' })
+  recordDemoEvent(caseId, 'resident:' + residentId, 'case.status_changed', { to: 'SCHEDULED' })
+  return waitForFixture(booked)
 }
 
 function createDemoCase(body: CreateCaseRequest): Promise<MaintenanceCase> {
