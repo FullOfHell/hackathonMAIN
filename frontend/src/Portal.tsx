@@ -297,16 +297,33 @@ const labels: Record<PartnerAction, string> = {
   start: 'Start repair', complete: 'Complete repair', invoice: 'Submit demo invoice',
 }
 const availableActions: Record<string, PartnerAction[]> = {
-  received: ['accept', 'reject'], accepted: ['offer-slots', 'reject', 'accept'],
-  slots_offered: ['offer-slots'], scheduled: ['start'], in_progress: ['complete', 'start'],
+  received: ['accept', 'reject'], accepted: ['offer-slots', 'reject'],
+  scheduled: ['start'], in_progress: ['complete'],
   completed: ['invoice'],
 }
-const statusForAction: Record<PartnerAction, string> = {
-  accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered', start: 'in_progress',
-  complete: 'completed', invoice: 'invoice_ready',
-}
-const repeatLabels: Partial<Record<PartnerAction, string>> = {
-  accept: 'Check acceptance', 'offer-slots': 'Check slot delivery', start: 'Check repair start',
+const jobChecks: Record<string, {
+  action: 'accept' | 'reject' | 'offer-slots' | 'start'
+  label: string
+  confirmation: string
+  missing: string
+  target?: string
+}> = {
+  accepted: {
+    action: 'accept', label: 'Check acceptance', confirmation: 'Acceptance confirmed on the resident case.',
+    missing: 'Acceptance is still missing from the resident case.',
+  },
+  rejected: {
+    action: 'reject', label: 'Check rejection', confirmation: 'Rejection confirmed on the resident case.',
+    missing: 'Rejection is still missing from the resident case.', target: 'DECLINED',
+  },
+  slots_offered: {
+    action: 'offer-slots', label: 'Check slot delivery', confirmation: 'The offered slots reached the resident case.',
+    missing: 'The offered slots have not reached the resident case.', target: 'SLOTS_OFFERED',
+  },
+  in_progress: {
+    action: 'start', label: 'Check repair start', confirmation: 'Repair start confirmed on the resident case.',
+    missing: 'Repair start is still missing from the resident case.', target: 'IN_PROGRESS',
+  },
 }
 
 function syntheticInvoice(jobId: string): RepairInvoiceInput {
@@ -320,11 +337,12 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
   const [editing, setEditing] = useState<'complete' | 'invoice' | null>(null)
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
-  const [checkingRejection, setCheckingRejection] = useState(false)
-  const [rejectionConfirmed, setRejectionConfirmed] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [confirmation, setConfirmation] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
   const actions = retry ? [retry.action] : availableActions[job.status] ?? []
+  const check = jobChecks[job.status]
   const invoice = syntheticInvoice(job.id)
 
   async function act(command: PartnerCommand) {
@@ -333,11 +351,14 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
     const { action } = command
     setPending(action)
     setError('')
+    setConfirmation('')
     try {
-      setJob(await api.updatePartnerJob(job.id, command))
+      const updated = await api.updatePartnerJob(job.id, command)
+      setJob(updated)
       setRetry(null)
       setEditing(null)
-      if (action === 'reject') setRejectionConfirmed(true)
+      const acknowledged = jobChecks[updated.status]
+      if (acknowledged?.action === action) setConfirmation(acknowledged.confirmation)
     } catch (failure) {
       setRetry(command)
       setError(failure instanceof Error ? failure.message : 'The partner action could not be confirmed.')
@@ -347,25 +368,28 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
     }
   }
 
-  async function checkRejection() {
-    if (submitting.current) return
+  async function checkDelivery() {
+    if (!check || submitting.current) return
     submitting.current = true
-    setCheckingRejection(true)
-    setRejectionConfirmed(false)
+    setChecking(true)
+    setConfirmation('')
     setError('')
     try {
       const events = await api.getCaseEvents(job.request_id)
-      if (events.some((event) => event.payload.to === 'DECLINED')) {
-        setRejectionConfirmed(true)
+      const confirmed = events.some((event) => check.target
+        ? event.type === 'case.status_changed' && event.payload.to === check.target
+        : event.type === 'partner.accepted')
+      if (confirmed) {
+        setConfirmation(check.confirmation)
       } else {
-        setRetry({ action: 'reject' })
-        setError('Rejection is still missing from the resident case. Retry sending it.')
+        setRetry({ action: check.action })
+        setError(check.missing + ' Retry sending it.')
       }
     } catch {
       setError('The resident case could not be checked. Try again.')
     } finally {
       submitting.current = false
-      setCheckingRejection(false)
+      setChecking(false)
     }
   }
 
@@ -402,22 +426,20 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
         </div>
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
-      {job.status === 'rejected' && !retry && <div className="actions">
-        <button className="secondary" disabled={checkingRejection} onClick={() => void checkRejection()}>
-          {checkingRejection ? 'Checking rejection…' : 'Check rejection'}
+      {check && !retry && !editing && <div className="actions">
+        <button className="secondary" disabled={checking || Boolean(pending)} onClick={() => void checkDelivery()}>
+          {checking ? 'Checking resident case…' : check.label}
         </button>
       </div>}
-      {rejectionConfirmed && <p className="muted" role="status">Rejection confirmed on the resident case.</p>}
+      {confirmation && <p className="muted" role="status">{confirmation}</p>}
       {actions.length > 0 && (!editing || retry) && <div className="actions" aria-label="Partner job actions">
-        {actions.map((action) => {
-          const repeat = job.status === statusForAction[action]
-          return <button key={action} className={action === 'reject' || repeat ? 'secondary' : undefined}
-            disabled={Boolean(pending)} onClick={() => begin(action)}>
+        {actions.map((action) => (
+          <button key={action} className={action === 'reject' ? 'secondary' : undefined}
+            disabled={checking || Boolean(pending)} onClick={() => begin(action)}>
             {pending === action ? 'Sending…' : retry?.action === action ? 'Retry ' + labels[action].toLowerCase()
-              : repeat ? repeatLabels[action] ?? labels[action]
-                : labels[action]}
+              : labels[action]}
           </button>
-        })}
+        ))}
       </div>}
     </article>
   )
