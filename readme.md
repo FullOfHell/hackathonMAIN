@@ -91,7 +91,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLite databases in `backend/data/app.db` and upgrades existing cases in place. Defaults run both the centrix stand-in and simulated HeatFix on port 8000. For other addresses or a custom shared secret, set `PUBLIC_BACKEND_URL`, `PARTNER_BASE_URL` and `PARTNER_WEBHOOK_SECRET` in the environment or in `backend/.env`. See the [environment template](.env.example).
 
-For ElevenLabs and n8n (cloud services), expose the backend with `cloudflared tunnel --url http://localhost:8000` and put the HTTPS URL in `PUBLIC_BACKEND_URL`.
+For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI. If ElevenLabs needs to reach the backend, configure its reachable HTTPS origin in `PUBLIC_BACKEND_URL`.
 
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
@@ -105,4 +105,6 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The tenant portal can send an approved report to the simulated HeatFix inbox and show the case timeline. The backend supports the full repair through `CLOSED`. After the resident books a slot, HeatFix starts the work, submits a repair report, then attaches an invoice. The unit history returns the booked appointment and both downloadable documents. The manager can escalate a declined, failed or unmatched case for human review. The partner controls, portal booking and manager view can use the [documented API actions](Docs/connector-spec.md).
+The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline.
+
+The backend supports repair start, completion, and invoice attachment through `CLOSED`. The unit history returns the appointment and both downloadable documents. There is also an API to escalate declined, failed or unmatched cases for human review. The remaining browser work is to wire the repair actions and display the documents. See the [connector specification](Docs/connector-spec.md).
