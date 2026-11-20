@@ -229,6 +229,45 @@ def test_callbacks_only_send_credentials_to_configured_origin(client):
     assert client.get(url).json()["status"] == "received"
 
 
+@pytest.mark.parametrize(("action", "status", "event_type"), [
+    ("accept", "accepted", "partner.accepted"),
+    ("reject", "rejected", "case.status_changed"),
+])
+def test_saved_loopback_alias_delivers_to_configured_centrix(client, monkeypatch, action, status, event_type):
+    monkeypatch.setenv("PUBLIC_BACKEND_URL", "http://localhost:8001")
+    case = create_case(client)
+    approved = client.post(case_url(case) + "/sharing-approval", json=load("sharing-approval.json")).json()
+    url = job_url(approved)
+    assert client.get(url).json()["payload"]["callback_url"] == "http://localhost:8001" + CALLBACK
+    monkeypatch.setenv("PUBLIC_BACKEND_URL", "http://127.0.0.1:8001")
+
+    def deliver(request):
+        assert str(request.url) == "http://127.0.0.1:8001" + CALLBACK
+        return client.post(CALLBACK, content=request.content, headers=dict(request.headers))
+
+    with httpx.Client(transport=httpx.MockTransport(deliver)) as callback_client:
+        app.dependency_overrides[get_callback_client] = lambda: callback_client
+        response = client.post(url + "/" + action)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == status
+    events = client.get(case_url(case) + "/events").json()
+    assert events[-1]["type"] == event_type
+
+
+@pytest.mark.parametrize("callback_url", [
+    "http://localhost:8002" + CALLBACK,
+    "http://localhost:8001/another-path",
+    "http://localhost:8001" + CALLBACK + "?redirect=1",
+])
+def test_saved_loopback_alias_requires_the_same_port_and_callback_path(client, monkeypatch, callback_url):
+    monkeypatch.setenv("PUBLIC_BACKEND_URL", "http://127.0.0.1:8001")
+    result = client.post("/partners/heatfix/connector/jobs", json=load("partner-job.json") | {"callback_url": callback_url})
+    assert result.status_code == 201
+    url = f"/partners/heatfix/connector/jobs/{result.json()['job_id']}"
+    assert client.post(url + "/accept").status_code == 422
+    assert client.get(url).json()["status"] == "received"
+
+
 def test_repeated_slot_ids_rejected_before_persisting(client, approved):
     body = event(approved)
     body["data"]["slots"][1]["slot_id"] = body["data"]["slots"][0]["slot_id"]
