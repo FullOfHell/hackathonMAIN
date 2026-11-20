@@ -57,7 +57,16 @@ input { accent-color: #942f1d; }
 .inbox-heading h2, .inbox-heading h3, .job p:last-child { margin-bottom: 0; }
 .job p { margin-block: .6rem; }
 .issue-copy { white-space: pre-line; }
-.status { background: #e7f0dd; color: #365121; padding: .3rem .6rem; border-radius: 1rem; font-size: .85rem; }
+.status {
+  display: inline-block; background: #ece7df; color: #504138;
+  padding: .3rem .6rem; border-radius: 1rem; font-size: .85rem;
+}
+.status:is([data-status="closed"], [data-status="declined"], [data-status="rejected"], [data-status="failed"]) { background: #f8dedd; color: #8e2219; }
+.status:is([data-status="awaiting_sharing_approval"], [data-status="awaiting_invoice_approval"]) { background: #fae9bf; color: #6b460d; }
+.status[data-status="partner_requested"] { background: #dceafa; color: #244e7c; }
+.status:is([data-status="slots_offered"], [data-status="completed"], [data-status="invoice_ready"]) { background: #e1efd9; color: #315325; }
+.status[data-status="received"] { background: #dfebee; color: #23525b; }
+.case-category { color: #594077; }
 .timeline { padding-left: 1.25rem; }
 .timeline li { padding-block: .2rem; }
 .timeline time { display: block; color: #6c554a; font-size: .85rem; }

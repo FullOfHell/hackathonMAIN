@@ -59,6 +59,10 @@ The original approved order can carry `issue.repair_scope = "building_heating"`.
 
 Linked timelines persist `building.repair_updated` on status changes. Shared closure closes linked reports, and a declined or failed dispatch moves them to human review. A linked resident can withdraw through the existing cancel endpoint. Before any dispatch, withdrawing the second distinct unit dissolves the group and records `building.outage_withdrawn` on remaining reports. With `prior_heating_case` approval, the job's optional `issue.previous_record.source_case_id` identifies the original unit record.
 
+## Contractor shown before sharing
+
+Heating reports use the tenant’s saved repair address when one is supplied. Include the city at the end, for example `Demo Street 15, 40210 Düsseldorf`. The portal sends `expected_partner_id` with sharing approval. A change to the recipient returns 409 until the tenant approves the current contractor. Consent and order retries keep the recipient already recorded.
+
 ## Failures and human review
 
 | Situation | API behavior and next action |

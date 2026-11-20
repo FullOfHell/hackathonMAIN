@@ -29,9 +29,10 @@ def callback_url() -> str:
 def build_job_request(case: dict, ctx: dict, resident: dict, approval: dict) -> PartnerJobRequest:
     """Only fields the resident approved leave centrix (data minimisation)."""
     fields = set(approval["shared_fields"])
-    prop = {"address": ctx["property"]["address"], "unit": ctx["unit"]["label"]}
+    prop = {"address": resident.get("address") or ctx["property"]["address"],
+            "unit": resident.get("unit") or ctx["unit"]["label"]}
     if "heating_type" in fields:
-        prop["heating_type"] = ctx["property"]["heating"]
+        prop["heating_type"] = resident.get("heating") or ctx["property"]["heating"]
     if "access_details" in fields:
         prop["access_details"] = ctx["property"]["access_details"]
     issue = {"description": case["description"], "symptoms": case["symptoms"], "priority": case["urgency"],

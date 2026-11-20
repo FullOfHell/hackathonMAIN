@@ -7,6 +7,7 @@ from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 SEED_PATH = BACKEND_DIR / "seed" / "seed.json"
+RESIDENT_HOME_FIELDS = ("address", "unit", "heating")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS properties (
@@ -19,7 +20,8 @@ CREATE TABLE IF NOT EXISTS units (
 );
 CREATE TABLE IF NOT EXISTS residents (
   id TEXT PRIMARY KEY, unit_id TEXT NOT NULL REFERENCES units(id), name TEXT NOT NULL,
-  email TEXT, phone TEXT, preferred_contact TEXT, move_in TEXT
+  email TEXT, phone TEXT, preferred_contact TEXT, move_in TEXT,
+  address TEXT, unit TEXT, heating TEXT
 );
 CREATE TABLE IF NOT EXISTS partners (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, service_types TEXT NOT NULL, regions TEXT NOT NULL,
@@ -126,6 +128,10 @@ def init_db(seed: bool = True) -> None:
     try:
         conn.executescript(SCHEMA)
         conn.execute("BEGIN IMMEDIATE")
+        resident_columns = {col["name"] for col in conn.execute("PRAGMA table_info(residents)")}
+        for field in RESIDENT_HOME_FIELDS:
+            if field not in resident_columns:
+                conn.execute(f"ALTER TABLE residents ADD COLUMN {field} TEXT")
         if "availability_preferences" not in {col["name"] for col in conn.execute("PRAGMA table_info(cases)")}:
             conn.execute("ALTER TABLE cases ADD COLUMN availability_preferences TEXT NOT NULL DEFAULT '[]'")
         if "event_data" not in {col["name"] for col in conn.execute("PRAGMA table_info(processed_partner_events)")}:
@@ -156,7 +162,7 @@ def load_seed(conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO units VALUES (?,?,?,?,?)",
                      (u["id"], u["property_id"], u["unit_label"], u["floor"], u["size_sqm"]))
     for r in data["residents"]:
-        conn.execute("INSERT INTO residents VALUES (?,?,?,?,?,?,?)",
+        conn.execute("INSERT INTO residents (id,unit_id,name,email,phone,preferred_contact,move_in) VALUES (?,?,?,?,?,?,?)",
                      (r["id"], r["unit_id"], r["name"], r["email"], r["phone"], r["preferred_contact"], r["move_in"]))
     for pa in data["partners"]:
         conn.execute("INSERT INTO partners VALUES (?,?,?,?,?,?)",
