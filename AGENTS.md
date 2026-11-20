@@ -18,7 +18,7 @@ The official requirements are in `Docs/Reltix-Track-Description.pdf`. The implem
 
 - One P0 service: heating repair.
 - Resident channels: the portal (P0) and a simulated text-message outbox with one-click links (P1). No voice agent: Reltix already has one (see `Docs/mentor-feedback.md`).
-- centrix approves repair costs up to €3,000; invoices above that are flagged for manager approval, never silently closed.
+- The owner–manager agreement sets the spending limit. The owner authorizes costs above it. €3,000 is the demo example. The shipped API holds a high invoice after completion for a simulated manager action. Advance owner authorization is a separate workflow.
 - The connector must let Reltix add a new partner category (e.g. internet) without changing case-domain logic.
 - FastAPI and SQLite are the source of truth for domain state.
 - The LLM may extract and explain information, but it may not invent diagnoses, appointments, partner acceptance, completion, or invoice state.

@@ -124,15 +124,16 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test repair completion and invoice linking across retries and restart.
 - [x] Verify that concurrent retries after an outage or lost acknowledgment produce one document and one corresponding case transition.
 - [x] Test unavailable-provider escalation.
-- [x] Verify the typed report-to-invoice flow in the browser against local FastAPI and offline fixtures.
-- [ ] Rehearse the full typed demo with live n8n enabled.
+- [x] Rehearse the typed portal against live FastAPI on a fresh synthetic SQLite database with external services disabled. Repeating the minimum-field approval returned the same HeatFix job. After a backend restart the appointment, repair report, €125 invoice and all 12 actor-stamped events still belonged to the original case and unit. A separate case remained `DECLINED`.
+- [x] Rehearse the full typed demo against C’s published provider-neutral workflow on a local n8n instance. The authenticated webhook created one job. A real webhook replay returned the same job with `duplicate: true`. A third execution dispatched the separate case used for rejection.
+- [ ] C: repeat in the shared demo environment and record the execution and case/job IDs in the checkpoint PR.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
 
-## P0 - Product / Frontend remaining work
+## P0 - Product / Frontend handoff
 
-1. **Demo and QA.** Rehearse from a fresh seed with live n8n enabled. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
+1. **Shared demo rehearsal.** Repeat the typed flow from a fresh seed using the published n8n workflow. Include a retry and a rejection or no-provider path, verify the persisted timeline, and record the execution and matching case and job IDs in the checkpoint PR.
 2. **Optional dictation.** Pair with C for the live microphone check after the key is configured. Keep typed intake available for the rehearsal.
 3. **A — HeatFix inbox recovery.** Read `pending_callback` from each job on load or refresh. When present, show “Retry delivery” and POST the event ID to the retry endpoint with an empty body. Use the returned job on success and refresh after a 502. A job's local status can advance before centrix acknowledges its callback.
 
@@ -143,8 +144,8 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 - [x] B: detect loss of heating across two distinct units within 24 hours, reuse one consented job and update both case timelines.
 - [ ] A: add the 4B / 2A demo selector and shared-repair cards. Let the dispatch case confirm the slot and show the confirmed appointment read-only on the linked case. Rehearse two reports and one HeatFix inbox entry.
 - [ ] C: deliver the simulated text-message outbox and one-click slot confirmation on the same case. Use the case timeline for building updates and the dispatch case for slot selection.
-- [x] B: hold invoices above €3,000 for manager approval and audit the approval. Exactly €3,000 closes automatically.
-- [ ] A: wire the manager approval control to `POST /api/cases/{id}/approve-invoice`. Add a €3,000.01 demo invoice option and verify exactly €3,000 still closes automatically.
+- [x] B: hold post-completion invoices above €3,000 for manager approval and audit that action. Exactly €3,000 closes automatically.
+- [ ] A: wire and label the post-completion manager approval control for `POST /api/cases/{id}/approve-invoice`. Add a €3,000.01 demo invoice option and verify exactly €3,000 still closes automatically.
 - [x] B: register a simulated internet provider through a capabilities manifest and document the move-in → offer → contract design.
 - [x] B: handle partner rejection or unavailability with human escalation.
 - [x] B: include the approved previous repair's case ID and date as source attribution.
@@ -152,6 +153,12 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 - [ ] Include relevant caretaker or access information; never share a key-safe code automatically.
 - [x] Provide deterministic and manual intake when OpenAI is unavailable, plus direct HeatFix dispatch when n8n is disabled.
 - [ ] Support an optional repair photo; AI may describe it but may not diagnose the fault.
+
+## Organizer follow-ups outside the typed P0 checkpoint
+
+- [ ] Model the spending limit from the owner–manager agreement and record advance owner authorization for above-limit work. The current high-invoice manager action happens after completion. Allow the owner to compare quotes when the agreement or circumstances call for them.
+- [ ] Define which resident and property fields each role can edit before adding profile editing. Login is outside the prototype.
+- [ ] Give the manager a follow-up flag for a received job with no partner response. The organizer specified no response deadline. Existing uncertain-dispatch retries reuse the original key.
 
 ## P2 - Optional; skip if the demo is at risk
 
@@ -175,7 +182,7 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 
 ## Next team handoffs
 
-- **A - Frontend:** build the two-unit browser demo, then connect manager invoice approval. Own the browser rehearsal and pitch.
+- **A - Frontend:** surface and rehearse pending HeatFix callback retries, build the two-unit browser demo, and connect manager invoice approval. Own the browser rehearsal and pitch.
 - **B - Backend:** support the two-unit rehearsal and verify that both timelines follow one consented job and booking. See the [connector contract](connector-spec.md).
-- **C - Integrations:** verify live n8n and the configured OpenAI model path. Pair with A on dictation verification, then implement the simulated text-message outbox and booking link.
+- **C - Integrations:** verify n8n dispatch in the shared demo and check the configured OpenAI model path. Pair with A on dictation verification, then implement the simulated text-message outbox and booking link.
 - **C — Connector documentation:** add the [HeatFix callback recovery wording](assumptions.md) to the callback section of the connector spec.
