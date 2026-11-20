@@ -10,6 +10,7 @@ Everyone - including AI coding tools - should read these files before changing t
 2. [`Docs/Reltix_Hackathon_Project_Plan.md`](Docs/Reltix_Hackathon_Project_Plan.md) - product plan, architecture, API contracts, backlog, and acceptance tests.
 3. [`Docs/Reltix-Track-Description.pdf`](Docs/Reltix-Track-Description.pdf) - official Reltix challenge brief and final source of truth for track requirements.
 4. [`Docs/SpecialFeatures.md`](Docs/SpecialFeatures.md) - differentiators to attempt only after the core flow works.
+5. [`Docs/TODO.md`](Docs/TODO.md) - prioritized implementation checklist for the three-person team.
 
 If these documents conflict, the official track description wins for challenge requirements. `AGENTS.md` wins for repository working conventions.
 
