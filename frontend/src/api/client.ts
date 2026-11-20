@@ -24,6 +24,7 @@ const waitForFixture = async <T>(value: T): Promise<T> => {
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
+    cache: init?.method === 'POST' ? 'default' : 'no-store',
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
   })
   if (!response.ok) {

@@ -15,3 +15,9 @@ export function slotLabel(slot: AppointmentSlot) {
 export function statusLabel(status: string) {
   return status.toLowerCase().replace(/_/g, ' ')
 }
+
+export function caseStatusLabel(status: string) {
+  if (status === 'DECLINED' || status === 'rejected') return 'Declined by HeatFix'
+  const label = statusLabel(status.replace(/[.]/g, '_'))
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}

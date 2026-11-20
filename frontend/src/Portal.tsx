@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
-import { formatTime, slotLabel, statusLabel } from './caseDisplay'
+import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
 import type { MaintenanceCase, PartnerAction, PartnerCommand, PartnerInboxJob, RepairInvoiceInput, UnitContext } from './types/domain'
 import './Portal.css'
 
@@ -20,7 +20,12 @@ function useLoad<T>(load: () => Promise<T>) {
     )
     return () => { active = false }
   }, [load, attempt])
-  return { ...result, reload: () => { setResult({}); setAttempt((value) => value + 1) } }
+  return {
+    ...result,
+    refreshing: attempt > 0 && !result.data && !result.failed,
+    refreshed: attempt > 0 && Boolean(result.data),
+    reload: () => { setResult({}); setAttempt((value) => value + 1) },
+  }
 }
 
 const unitId = 'unit_4b'
@@ -273,7 +278,12 @@ function Inbox() {
   const jobs = useLoad(api.listPartnerJobs)
   return (
     <section className="inbox" aria-label="Incoming repair jobs">
-      <div className="inbox-heading"><h2>Incoming jobs</h2><button className="secondary" onClick={jobs.reload}>Refresh</button></div>
+      <div className="inbox-heading"><h2>Incoming jobs</h2>
+        <button className="secondary" disabled={jobs.refreshing} onClick={jobs.reload}>
+          {jobs.refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+      {jobs.refreshed && <p className="muted" role="status">Inbox updated.</p>}
       {jobs.failed ? <p className="panel error" role="alert">The HeatFix inbox could not be loaded. Try refreshing.</p>
         : !jobs.data ? <p className="panel" role="status">Loading jobs…</p>
           : !jobs.data.length ? <p className="panel">No jobs yet. Approved reports will appear here.</p>
@@ -288,7 +298,7 @@ const labels: Record<PartnerAction, string> = {
 }
 const availableActions: Record<string, PartnerAction[]> = {
   received: ['accept', 'reject'], accepted: ['offer-slots', 'reject', 'accept'],
-  slots_offered: ['offer-slots'], rejected: ['reject'], scheduled: ['start'], in_progress: ['complete', 'start'],
+  slots_offered: ['offer-slots'], scheduled: ['start'], in_progress: ['complete', 'start'],
   completed: ['invoice'],
 }
 const statusForAction: Record<PartnerAction, string> = {
@@ -296,7 +306,7 @@ const statusForAction: Record<PartnerAction, string> = {
   complete: 'completed', invoice: 'invoice_ready',
 }
 const repeatLabels: Partial<Record<PartnerAction, string>> = {
-  accept: 'Check acceptance', reject: 'Check rejection', 'offer-slots': 'Check slot delivery', start: 'Check repair start',
+  accept: 'Check acceptance', 'offer-slots': 'Check slot delivery', start: 'Check repair start',
 }
 
 function syntheticInvoice(jobId: string): RepairInvoiceInput {
@@ -310,6 +320,8 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
   const [editing, setEditing] = useState<'complete' | 'invoice' | null>(null)
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
+  const [checkingRejection, setCheckingRejection] = useState(false)
+  const [rejectionConfirmed, setRejectionConfirmed] = useState(false)
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
   const actions = retry ? [retry.action] : availableActions[job.status] ?? []
@@ -325,12 +337,35 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
       setJob(await api.updatePartnerJob(job.id, command))
       setRetry(null)
       setEditing(null)
+      if (action === 'reject') setRejectionConfirmed(true)
     } catch (failure) {
       setRetry(command)
       setError(failure instanceof Error ? failure.message : 'The partner action could not be confirmed.')
     } finally {
       submitting.current = false
       setPending(null)
+    }
+  }
+
+  async function checkRejection() {
+    if (submitting.current) return
+    submitting.current = true
+    setCheckingRejection(true)
+    setRejectionConfirmed(false)
+    setError('')
+    try {
+      const events = await api.getCaseEvents(job.request_id)
+      if (events.some((event) => event.payload.to === 'DECLINED')) {
+        setRejectionConfirmed(true)
+      } else {
+        setRetry({ action: 'reject' })
+        setError('Rejection is still missing from the resident case. Retry sending it.')
+      }
+    } catch {
+      setError('The resident case could not be checked. Try again.')
+    } finally {
+      submitting.current = false
+      setCheckingRejection(false)
     }
   }
 
@@ -342,7 +377,7 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
 
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Heating repair</h3><span className="status" role="status">{statusLabel(job.status)}</span></div>
+      <div className="inbox-heading"><h3>Heating repair</h3><span className="status" role="status">{caseStatusLabel(job.status)}</span></div>
       <p>{property.address} · Unit {property.unit}</p>
       <p className="issue-copy">{issue.description}</p>
       {property.heating_type && <p>Heating · {property.heating_type}</p>}
@@ -367,6 +402,12 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
         </div>
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
+      {job.status === 'rejected' && !retry && <div className="actions">
+        <button className="secondary" disabled={checkingRejection} onClick={() => void checkRejection()}>
+          {checkingRejection ? 'Checking rejection…' : 'Check rejection'}
+        </button>
+      </div>}
+      {rejectionConfirmed && <p className="muted" role="status">Rejection confirmed on the resident case.</p>}
       {actions.length > 0 && (!editing || retry) && <div className="actions" aria-label="Partner job actions">
         {actions.map((action) => {
           const repeat = job.status === statusForAction[action]
@@ -425,7 +466,7 @@ function ResidentCase({ item }: { item: MaintenanceCase }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{statusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <button className="secondary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         {expanded ? 'Hide case details' : 'View case details'}
@@ -440,7 +481,7 @@ function ManagerCase({ item }: { item: MaintenanceCase }) {
   const contractor = item.sharing_request?.partner.name ?? (item.partner_id === 'p_heatfix' ? 'HeatFix Aachen GmbH' : item.partner_id)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{statusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <dl className="home-details">
         <dt>Contractor</dt><dd>{contractor ?? 'Unassigned'}</dd>
