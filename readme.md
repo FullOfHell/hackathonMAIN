@@ -43,13 +43,15 @@ The project plan describes the full demo. The implemented booking and callback c
 
 ## Frontend development
 
-The fixture-backed React and TypeScript application is in `frontend/`.
+The React and TypeScript portal is in `frontend/`. It includes tenant intake, an editable review, explicit sharing approval, a case timeline, and the HeatFix inbox.
 
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+
+For the live demo, start FastAPI, copy `frontend/.env.example` to `frontend/.env.local`, and restart Vite. The template uses `http://localhost:8000`. Open the frontend at `http://localhost:5173`, submit a heating report, approve the sharing request, then open **HeatFix inbox** to see the job. Leave `VITE_API_BASE_URL` unset for an offline fixture demo. Fixture reports reset on page reload.
 
 Before opening a pull request, run:
 
@@ -98,4 +100,4 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The tested backend flow reaches `SCHEDULED` when the reporting resident selects an offered slot and HeatFix confirms the booking. A rejected job reaches `DECLINED`. The tenant frontend includes a fixture-backed intake screen. Slot selection in the portal, completion records and invoices are subsequent milestones.
+The tenant portal can send an approved report to the simulated HeatFix inbox and show the case timeline. The tested backend flow reaches `SCHEDULED` when the reporting resident selects an offered slot and HeatFix confirms the booking. A rejected job reaches `DECLINED`. Portal slot selection, completion records and invoices are subsequent milestones.

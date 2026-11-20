@@ -45,18 +45,18 @@ Target milestone:
 
 `resident submits issue -> persistent case created -> sharing approval recorded -> mock partner receives exactly one job`
 
-- [ ] Build the tenant's typed "no heating" report screen.
-- [ ] Pre-fill address, unit, heating type and resident context.
+- [x] Build the tenant's typed "no heating" report screen.
+- [x] Pre-fill address, unit, heating type and resident context.
 - [ ] Ask only for missing information.
-- [ ] Display an editable issue summary before submission.
-- [ ] Show the exact fields that will be shared with the partner.
+- [x] Display an editable issue summary before submission.
+- [x] Show the exact fields that will be shared with the partner.
 - [x] Require explicit approval and persist the approval record.
 - [x] Create the generic connector interface.
 - [x] Implement the simulated HeatFix partner.
 - [ ] Route the approved case through n8n.
 - [x] Add an idempotency key so retries cannot create duplicate jobs.
-- [ ] Display the received job in a basic partner dashboard.
-- [ ] Test retrying the same submission.
+- [x] Display the received job in a basic partner dashboard.
+- [x] Test retrying the same sharing approval.
 
 Do not begin P1 work until this milestone is reliable.
 
