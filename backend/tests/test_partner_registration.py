@@ -198,3 +198,36 @@ def test_generic_workflow_routes_stored_order_once_after_lost_acknowledgment(
     assert retry.json()["partner_job_id"] == job["id"]
     assert [receipt["job_id"] for receipt in deliveries] == [job["id"], job["id"]]
     assert [receipt["duplicate"] for receipt in deliveries] == [False, True]
+
+
+MANAGER_CONTRACTORS = "/api/manager/contractors"
+MANAGER_CONTRACTOR = {"name": "Aachen Demo Heating", "slug": "aachen-demo-heating", "region": "Aachen"}
+
+
+def test_manager_adds_persistent_contractor_and_routes_approved_repair(client):
+    response = client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR)
+    assert response.status_code == 201, response.text
+    registered = response.json()
+    assert registered == {"name": "Aachen Demo Heating", "slug": "aachen-demo-heating", "regions": ["Aachen"]}
+    init_db()
+    assert registered in client.get(MANAGER_CONTRACTORS).json()
+    case = create_case(client)
+    assert case["sharing_request"]["partner"]["name"] == registered["name"]
+    jobs_url = f"/partners/{registered['slug']}/connector/jobs"
+    assert client.get(jobs_url).json() == client.get(HEATFIX_JOBS).json() == []
+    approved = client.post(f"/api/cases/{case['id']}/sharing-approval", json=CONSENT)
+    assert approved.status_code == 200, approved.text
+    job, = client.get(jobs_url).json()
+    assert job["id"] == approved.json()["partner_job_id"]
+    assert client.get(HEATFIX_JOBS).json() == []
+
+
+def test_manager_cannot_replace_a_contractor_or_override_connector_url(client):
+    assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR).status_code == 201
+    assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | {"name": "Other"}).status_code == 409
+    for reserved in ("heatfix", "fibrenet", "warmwerk"):
+        assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | {"slug": reserved}).status_code == 409
+    for invalid in ({"slug": "../heatfix"}, {"region": " "}, {"name": " "}, {"base_url": "https://example.invalid"}):
+        assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | invalid).status_code == 422
+    saved = client.get(MANAGER_CONTRACTORS).json()
+    assert [row["name"] for row in saved if row["slug"] == MANAGER_CONTRACTOR["slug"]] == [MANAGER_CONTRACTOR["name"]]

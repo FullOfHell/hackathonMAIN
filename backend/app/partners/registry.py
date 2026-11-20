@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db import get_db
 from app.schemas import DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, IssueType
@@ -40,6 +40,20 @@ class Registration(BaseModel):
     capabilities: Capabilities
 
 
+class ContractorCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    slug: str = Field(min_length=1, max_length=48, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    region: str = Field(min_length=1, max_length=80)
+
+
+class Contractor(BaseModel):
+    name: str
+    slug: str
+    regions: list[str]
+
+
 def consent_fields(fields: list[str]) -> list[str]:
     return list(dict.fromkeys("prior_heating_case" if field == "previous_record" else field for field in fields))
 
@@ -57,21 +71,57 @@ def sharing_policy(conn, partner_id: str | None) -> dict:
             "proposed_fields": [field for field in DEFAULT_PROPOSED_FIELDS if field in supported]}
 
 
+def save_registration(conn, registration: Registration):
+    cap = registration.capabilities
+    conn.execute(
+        "INSERT INTO partners (id,name,base_url,service_types,regions) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(id) DO NOTHING",
+        (cap.partner_id, registration.name, registration.base_url,
+         json.dumps(cap.categories), json.dumps(cap.regions)))
+    # Preserve region, categories and endpoint overrides of pre-existing demo partners.
+    routing = conn.execute("SELECT service_types,regions FROM partners WHERE id=?", (cap.partner_id,)).fetchone()
+    manifest = cap.model_copy(update={"categories": json.loads(routing["service_types"]),
+                                      "regions": json.loads(routing["regions"])})
+    conn.execute("INSERT INTO partner_capabilities VALUES (?,?) ON CONFLICT(partner_id) DO UPDATE "
+                 "SET manifest=excluded.manifest", (cap.partner_id, manifest.model_dump_json()))
+
+
 def install_registrations(conn, directory=MANIFESTS):
     for path in sorted(directory.glob("*.json")):
-        registration = Registration.model_validate_json(path.read_bytes())
-        cap = registration.capabilities
-        conn.execute(
-            "INSERT INTO partners (id,name,base_url,service_types,regions) VALUES (?,?,?,?,?) "
-            "ON CONFLICT(id) DO NOTHING",
-            (cap.partner_id, registration.name, registration.base_url,
-             json.dumps(cap.categories), json.dumps(cap.regions)))
-        # Preserve region, categories and endpoint overrides of pre-existing demo partners.
-        routing = conn.execute("SELECT service_types,regions FROM partners WHERE id=?", (cap.partner_id,)).fetchone()
-        manifest = cap.model_copy(update={"categories": json.loads(routing["service_types"]),
-                                          "regions": json.loads(routing["regions"])})
-        conn.execute("INSERT INTO partner_capabilities VALUES (?,?) ON CONFLICT(partner_id) DO UPDATE "
-                     "SET manifest=excluded.manifest", (cap.partner_id, manifest.model_dump_json()))
+        save_registration(conn, Registration.model_validate_json(path.read_bytes()))
+
+
+@router.get("/api/manager/contractors")
+def list_contractors(conn=Depends(get_db)) -> list[Contractor]:
+    rows = conn.execute(
+        "SELECT p.name,p.base_url,p.regions FROM partners p JOIN partner_capabilities k ON p.id=k.partner_id "
+        "WHERE p.active=1 AND p.base_url LIKE '/partners/%' AND json_extract(k.manifest,'$.kind')='delivery' "
+        "ORDER BY p.name,p.id")
+    return [Contractor(name=row["name"], slug=row["base_url"].removeprefix("/partners/"),
+                       regions=json.loads(row["regions"])) for row in rows]
+
+
+@router.post("/api/manager/contractors", status_code=201)
+def add_contractor(body: ContractorCreate, conn=Depends(get_db)) -> Contractor:
+    partner_id = f"p_manager_{body.slug}"
+    base_url = f"/partners/{body.slug}"
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if body.slug == "heatfix" or conn.execute(
+            "SELECT 1 FROM partners WHERE id=? OR base_url=?",
+            (partner_id, base_url),
+        ).fetchone():
+            raise HTTPException(409, "That contractor inbox URL is already in use.")
+        template = Registration.model_validate_json((MANIFESTS / "heatfix.json").read_bytes())
+        registration = Registration(
+            name=body.name,
+            base_url=base_url,
+            capabilities=template.capabilities.model_copy(update={
+                "partner_id": partner_id, "regions": [body.region],
+            }),
+        )
+        save_registration(conn, registration)
+    return Contractor(name=body.name, slug=body.slug, regions=[body.region])
 
 
 @router.get("/api/integrations/partners")

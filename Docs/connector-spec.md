@@ -72,6 +72,10 @@ Linked timelines persist `building.repair_updated` on status changes. Shared clo
 
 ## Adding a delivery provider
 
+In the portal, open **Manager → Contractors → Add contractor** to register a simulated heating contractor without restarting FastAPI. Enter the company name, exact service region and a unique inbox slug. The saved contractor appears in the list with an **Open inbox** link. New cases use the usual service and region match, with the name as a tie-break.
+
+The demo manager API lists active local delivery providers at `GET /api/manager/contractors`. `POST /api/manager/contractors` accepts `name`, `region` and `slug`, and returns 201 with `name`, `regions` and `slug`. The slug uses lowercase letters, digits and hyphen separators. A slug already in use returns 409. The portal form generates a local connector route and uses the built-in heating simulator.
+
 Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
 
 1. Add a manifest in `backend/seed/partner-registrations/` with a unique `partner_id`, `kind: delivery`, a `base_url`, categories, regions, and the `maintenance.case_created` trigger. Restart FastAPI. A local `/partners/{slug}` base uses the built-in simulator. For an external provider, use the HTTPS base URL of a connector v1 adapter implementing job creation, any advertised actions, and authenticated callbacks. Put provider-specific API calls and credentials behind that adapter.

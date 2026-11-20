@@ -201,6 +201,18 @@ export interface PartnerJob {
   callback_url: string
 }
 
+export interface ContractorInput {
+  name: string
+  slug: string
+  region: string
+}
+
+export interface Contractor {
+  name: string
+  slug: string
+  regions: string[]
+}
+
 export interface PartnerInboxJob {
   id: string
   request_id: string
