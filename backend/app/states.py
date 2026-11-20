@@ -1,0 +1,51 @@
+"""Case state machine. Shared team contract: change only with tests + docs (AGENTS.md)."""
+from enum import Enum
+
+
+class CaseStatus(str, Enum):
+    REPORTED = "REPORTED"
+    TRIAGED = "TRIAGED"
+    AWAITING_SHARING_APPROVAL = "AWAITING_SHARING_APPROVAL"
+    PARTNER_REQUESTED = "PARTNER_REQUESTED"
+    SLOTS_OFFERED = "SLOTS_OFFERED"
+    SCHEDULED = "SCHEDULED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CLOSED = "CLOSED"
+    # Alternate branches
+    DECLINED = "DECLINED"
+    NO_PROVIDER_AVAILABLE = "NO_PROVIDER_AVAILABLE"
+    CANCELLED = "CANCELLED"
+    NEEDS_HUMAN_REVIEW = "NEEDS_HUMAN_REVIEW"
+    FAILED = "FAILED"
+
+
+S = CaseStatus
+
+ALLOWED_TRANSITIONS: dict[CaseStatus, set[CaseStatus]] = {
+    S.REPORTED: {S.TRIAGED, S.NEEDS_HUMAN_REVIEW, S.CANCELLED},
+    S.TRIAGED: {S.AWAITING_SHARING_APPROVAL, S.NO_PROVIDER_AVAILABLE, S.NEEDS_HUMAN_REVIEW, S.CANCELLED},
+    S.AWAITING_SHARING_APPROVAL: {S.PARTNER_REQUESTED, S.DECLINED, S.CANCELLED},
+    S.PARTNER_REQUESTED: {S.SLOTS_OFFERED, S.DECLINED, S.FAILED, S.NEEDS_HUMAN_REVIEW, S.CANCELLED},
+    S.SLOTS_OFFERED: {S.SCHEDULED, S.FAILED, S.CANCELLED},
+    S.SCHEDULED: {S.IN_PROGRESS, S.FAILED, S.CANCELLED},
+    S.IN_PROGRESS: {S.COMPLETED, S.FAILED},
+    S.COMPLETED: {S.CLOSED},
+    S.CLOSED: set(),
+    S.DECLINED: {S.NEEDS_HUMAN_REVIEW},
+    S.NO_PROVIDER_AVAILABLE: {S.NEEDS_HUMAN_REVIEW},
+    S.CANCELLED: set(),
+    S.NEEDS_HUMAN_REVIEW: {S.AWAITING_SHARING_APPROVAL, S.CANCELLED},
+    S.FAILED: {S.NEEDS_HUMAN_REVIEW},
+}
+
+
+class InvalidTransition(Exception):
+    def __init__(self, current: CaseStatus, target: CaseStatus):
+        super().__init__(f"Transition {current.value} -> {target.value} is not allowed")
+        self.current, self.target = current, target
+
+
+def check_transition(current: CaseStatus, target: CaseStatus) -> None:
+    if target not in ALLOWED_TRANSITIONS[current]:
+        raise InvalidTransition(current, target)
