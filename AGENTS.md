@@ -63,6 +63,15 @@ Do not duplicate business rules in the UI or n8n. UI actions and partner callbac
 - Never push directly to `main`; open a PR. CI (`.github/workflows/ci.yml`) must be green: repo-safety, backend tests with branch coverage >= 75% (`backend/.coveragerc`), frontend type-check and build.
 - New backend behaviour needs tests in the same PR; do not lower the coverage threshold to get green.
 
+## AI tool budget (credits are limited)
+
+- Do **not** run the full test suite, coverage, linters, builds or dev servers on your own. The human runs them (and the pre-push hook and CI run them anyway).
+- If you must verify something, run **only the test file you added or changed**, at most once, at the end of the task.
+- Write **lean tests**: one happy path plus the one or two edge cases that protect a contract (idempotency, invalid actor, invalid transition). No exhaustive matrices.
+- Read only the files the task names plus what you need to follow imports. Don't scan the whole repo or re-read large docs repeatedly.
+- Don't reformat or refactor code you weren't asked to change. Keep diffs small.
+- Finish with a short summary of changed files and the exact commands the human should run to verify.
+
 ## Definition of done for a change
 
 - The intended behavior works from the relevant user or API boundary.

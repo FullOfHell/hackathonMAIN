@@ -20,6 +20,10 @@
     {"id": "c_203", "unit_id": "unit_2a", "name": "Tom Krüger", "email": "tom@example.com",
      "phone": "+49 151 00000001", "preferred_contact": "email", "move_in": "2024-08-15"}
   ],
+  "owners": [
+    {"id": "o_101", "property_id": "prop_musterstr_12", "name": "Maria Becker",
+     "email": "maria.becker@example.com", "phone": null}
+  ],
   "partners": [
     {"id": "p_warmwerk", "name": "WarmWerk Service Köln", "service_types": ["heating_repair"],
      "regions": ["Köln"], "base_url": "/partners/warmwerk", "active": true}

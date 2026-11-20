@@ -144,6 +144,71 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 For the P1 backend demo, submit “No heat at all” from the two seeded units using FastAPI's interactive API. Approve one report and inspect both case timelines and the single HeatFix job. The backend also holds invoices over €3,000 for manager approval and loads simulated partner registrations from `backend/seed/partner-registrations/`. See the [API walkthrough](Docs/connector-spec.md#building-heating-reports).
 
+## Notifications
+
+The backend writes one notification per recipient for each case milestone: request sent to the partner after the resident approves sharing (a saved report alone sends nothing), linked to a building repair, appointment offered and confirmed, repair progress, building heating incidents and invoices above €3,000. The portal box reads `GET /api/notifications?recipient_type=resident&recipient_id=c_202`. A noreply bot sends the same text plus a link by email or text message, as each recipient's preferences allow (`GET`/`PUT /api/recipients/{type}/{id}/notification-preferences`). The seed includes a synthetic owner, `o_101` (Maria Becker). Delivery failures are recorded on the notification and never stop the case flow.
+
+### Choose where messages go
+
+All settings live in `backend/.env`, a git-ignored file copied from the root [`.env.example`](.env.example). Explorer hides it because its name starts with a dot; open it in VS Code. Restart the backend after every change. `NOTIFY_TRANSPORT` is a comma list with one email transport and one text transport:
+
+| `NOTIFY_TRANSPORT` | Email goes to | Text messages go to | Needs |
+| --- | --- | --- | --- |
+| `outbox` (default) | nowhere, recorded as `sent_simulated` | nowhere, recorded as `sent_simulated` | nothing |
+| `smtp,ntfy` | Mailpit or a real mailbox | the ntfy phone app | Docker or a mail account; no tokens for ntfy |
+| `smtp,telegram` | Mailpit or a real mailbox | a Telegram bot | a bot token |
+
+A resident's **Preferred contact** in the portal (**Your home → Edit my details**) picks the default channel: Portal (in-app only), Email or Phone (text messages). Preferences saved through the API override these defaults per category. Each delivery is listed under `deliveries` in `GET /api/notifications` as `sent`, `sent_simulated`, `skipped` (with the reason) or `failed` (with the error).
+
+### Email with Mailpit (local, no account)
+
+1. Start Mailpit: `docker run -d --name mailpit -p 8025:8025 -p 1025:1025 axllent/mailpit`.
+2. In `backend/.env` set `NOTIFY_TRANSPORT=smtp` (or `smtp,ntfy`), `SMTP_HOST=localhost`, `SMTP_PORT=1025`, `SMTP_STARTTLS=false` and leave `SMTP_USER` and `SMTP_PASSWORD` empty.
+3. Restart the backend, choose **Email** as your preferred contact and make sure your profile has an email address.
+4. Report or advance a repair and open `http://localhost:8025`. Mailpit catches every message; nothing reaches a real mailbox.
+
+Start Mailpit again later with `docker start mailpit`.
+
+### Email to a real Gmail inbox
+
+1. Turn on 2-Step Verification for the Google account, then create an app password at `https://myaccount.google.com/apppasswords`. Google shows a 16-character password once.
+2. In `backend/.env` set:
+   ```
+   NOTIFY_TRANSPORT=smtp,ntfy
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_STARTTLS=true
+   SMTP_USER=your.address@gmail.com
+   SMTP_PASSWORD=the app password, without spaces
+   NOTIFY_FROM=centrix <your.address@gmail.com>
+   ```
+   Gmail sends from the signed-in account, so `NOTIFY_FROM` must use that address. Type the password into the file yourself; `.env` is git-ignored, so never copy it into `.env.example`.
+3. Restart the backend, set your profile email to the inbox you want to receive at, and choose **Email**. Check the spam folder for the first message.
+
+Other providers work the same way with their own SMTP host, port and password.
+
+### Text messages with ntfy (no account or token)
+
+1. Install the free [ntfy](https://ntfy.sh/) app on your phone.
+2. In `backend/.env` set `NOTIFY_TRANSPORT=smtp,ntfy` (keep `NTFY_SERVER=https://ntfy.sh`) and restart the backend.
+3. Choose **Phone** as your preferred contact.
+4. Open `GET /api/recipients/resident/c_202/notification-preferences` in `http://localhost:8000/docs` and copy `ntfy_topic`, for example `centrix-N5Kz…`. Each recipient gets one random topic, which stays the same until the database is reset.
+5. In the app tap **+**, paste the exact topic and keep the server `ntfy.sh`.
+6. Report or advance a repair. On Android, turn on **Instant delivery** for the subscription; otherwise pushes can arrive minutes late.
+
+ntfy topics are public, so the long random name is the only protection. Use synthetic data only. To check delivery without the app, open `https://ntfy.sh/<topic>` in a browser.
+
+### Text messages with a Telegram bot (after you have a token)
+
+1. In Telegram, message **@BotFather**, send `/newbot`, choose a name and a username ending in `bot`, and copy the token it replies with.
+2. In `backend/.env` set `TELEGRAM_BOT_TOKEN=<token>` and `NOTIFY_TRANSPORT=smtp,telegram`, then restart the backend. When both `ntfy` and `telegram` are listed, ntfy wins.
+3. Open your bot in Telegram, tap **Start** and send it any message. A bot can only message people who wrote to it first.
+4. Open `https://api.telegram.org/bot<token>/getUpdates` in a browser and copy the number from `"chat":{"id":…}`.
+5. Store it with `PUT /api/recipients/resident/c_202/notification-preferences` and the body `{"telegram_chat_id": "<chat id>", "categories": []}`. Fields you leave out keep their values.
+6. Choose **Phone** as your preferred contact and report or advance a repair.
+
+Links in messages point to `PUBLIC_FRONTEND_URL` (default `http://localhost:5173`), which opens only on the computer running the portal. To open them from a phone on the same Wi-Fi, set it to the computer's network address, for example `http://192.168.1.20:5173`.
+
 ## Three-person workflow
 
 - Create short-lived branches such as `frontend/tenant-flow`, `backend/case-api`, or `integration/partner-connector`.

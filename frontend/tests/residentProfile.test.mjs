@@ -20,6 +20,8 @@ test('saving a draft sends just the displayed actor and trimmed edits, and uses 
   const updated = { ...resident, phone: '+49 151 00000001' }
   assert.deepEqual(profileChanges(resident, { ...resident, name: ' ' + resident.name }), {})
   assert.deepEqual(profileChanges({ ...resident, phone: null }, { ...resident, phone: '' }), {})
+  assert.deepEqual(profileChanges(resident, { ...resident, preferred_contact: 'phone' }), { preferred_contact: 'phone' })
+  assert.deepEqual(profileChanges(resident, { ...resident, preferred_contact: 'sms' }), {})
   const changes = profileChanges(resident, { ...resident, phone: ' ' + updated.phone + ' ' })
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'http://centrix.test/api/units/unit_4b/residents/c_202/profile')

@@ -117,7 +117,7 @@ class ResidentProfilePatch(TypedDict, total=False):
     email: Annotated[str, Field(max_length=254, pattern=_EMAIL_PATTERN)]
     phone: Annotated[str, Field(max_length=40, pattern=rf"^\+?{_PHONE_GROUP}(?:[ .-]?{_PHONE_GROUP})*$"),
                      AfterValidator(_validate_phone_length)]
-    preferred_contact: Annotated[str, Field(pattern=r"^(portal|email)$")]
+    preferred_contact: Annotated[str, Field(pattern=r"^(portal|email|phone)$")]
 
 
 class ResidentProfile(BaseModel):

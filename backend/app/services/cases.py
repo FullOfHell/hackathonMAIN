@@ -4,12 +4,15 @@ import sqlite3
 import uuid
 
 from app.db import now_iso
+from app.services import notifications
 from app.states import CaseStatus, check_transition
 
 
 def record_event(conn: sqlite3.Connection, case_id: str, type_: str, actor: str, payload: dict | None = None) -> None:
-    conn.execute("INSERT INTO case_events (case_id,type,actor,timestamp,payload) VALUES (?,?,?,?,?)",
-                 (case_id, type_, actor, now_iso(), json.dumps(payload or {}, ensure_ascii=False)))
+    cursor = conn.execute("INSERT INTO case_events (case_id,type,actor,timestamp,payload) VALUES (?,?,?,?,?)",
+                          (case_id, type_, actor, now_iso(), json.dumps(payload or {}, ensure_ascii=False)))
+    # Same transaction: a rolled-back event never leaves a notification behind.
+    notifications.on_event(conn, case_id, cursor.lastrowid, type_, payload or {})
 
 
 def transition(conn: sqlite3.Connection, case_id: str, target: CaseStatus, actor: str, payload: dict | None = None) -> None:

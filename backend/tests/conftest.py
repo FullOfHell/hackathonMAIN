@@ -14,6 +14,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CONNECTOR_DISPATCH_SECRET", "")
     monkeypatch.setenv("PARTNER_WEBHOOK_SECRET", "test-only-partner-secret")
     monkeypatch.setenv("PUBLIC_BACKEND_URL", "http://testserver")
+    monkeypatch.setenv("NOTIFY_TRANSPORT", "outbox")  # never reach a local SMTP server or ntfy.sh from tests
     with TestClient(app) as c:
         app.dependency_overrides[get_partner_client] = lambda: c  # partner calls go in-process
         app.dependency_overrides[get_callback_client] = lambda: c
