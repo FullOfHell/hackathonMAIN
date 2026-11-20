@@ -2,6 +2,8 @@
 
 This checklist turns the project plan into an execution order for the three-person team. Complete the P0 workflow before starting P1. P2 is optional and should not put the demo at risk.
 
+**Current demo status.** The typed report-to-invoice flow, structured intake, and optional voice dictation are on `main`. The typed flow has passed a local browser rehearsal. Live n8n, model-assisted intake, and audio transcription still need verification with the demo credentials.
+
 ## Immediate setup
 
 - [ ] Choose the final project name.
@@ -48,7 +50,7 @@ Target milestone:
 
 - [x] Build the tenant's typed "no heating" report screen.
 - [x] Pre-fill address, unit, heating type and resident context.
-- [x] Ask for missing intake details and allow the resident to skip an uncertain answer.
+- [x] Ask one question at a time for missing intake details and allow optional questions to be skipped.
 - [x] Display an editable issue summary before submission.
 - [x] Show the exact fields that will be shared with the partner.
 - [x] Require explicit approval and persist the approval record.
@@ -83,13 +85,18 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - AI intake
 
-- [x] Define a strict structured-output schema for issue extraction.
-- [x] Extract symptoms, urgency, availability and missing information.
-- [x] Validate all model output in the backend.
-- [x] Ask the resident when information is uncertain rather than guessing.
-- [x] Add a deterministic fallback that works without an LLM.
-- [x] Add a fixed emergency message for a possible gas leak.
-- [x] Prevent AI from reporting a booking or outcome that is not in persisted state.
+- [x] Define the [structured intake contract](structured-intake-contract.md) and implement `POST /api/intake/extract`.
+- [x] Suggest symptoms, priority and availability in an editable review. Validate model output in FastAPI.
+- [x] Ask for missing details and keep deterministic and manual intake available without OpenAI.
+- [x] Show a fixed safety message and pause routine submission for a possible gas leak.
+- [x] Keep booking, repair and invoice status tied to persisted backend events.
+- [ ] C: verify one synthetic report returns `source: "model"` with the demo OpenAI credentials, then confirm the typed fallback still works with the model disabled.
+
+### Optional voice dictation
+
+- [x] Add a 30-second recorder, an explicit transcription action and an editable transcript in Report.
+- [x] Verify discard, failed-upload retry and transcript review with mocked responses. Transcription leaves case creation and sharing approval to the existing workflow.
+- [ ] A + C: set `OPENAI_API_KEY` and `OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe` in `backend/.env`, restart FastAPI, and verify one fictional recording end to end with the live provider.
 
 ## P0 - Connector quality and security
 
@@ -126,25 +133,25 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - Product / Frontend handoff
 
-1. **Intake handoff complete.** The portal calls `POST /api/intake/extract`. The backend tests cover missing details, grounded output, the gas safety signal and deterministic fallback.
-2. **C — Demo environment.** Configure the published n8n workflow and rehearse the typed flow on fresh synthetic data. Record a successful execution ID and matching case and job IDs in the checkpoint PR.
+1. **Shared demo rehearsal.** Repeat the typed flow from a fresh seed using the published n8n workflow. Include a retry and a rejection or no-provider path, verify the persisted timeline, and record the execution and matching case and job IDs in the checkpoint PR.
+2. **Optional dictation.** Pair with C for the live microphone check after the key is configured. Keep typed intake available for the rehearsal.
 3. **A — HeatFix inbox recovery.** Read `pending_callback` from each job on load or refresh. When present, show “Retry delivery” and POST the event ID to the retry endpoint with an empty body. Use the returned job on success and refresh after a 502. A job's local status can advance before centrix acknowledges its callback.
 
 ## P1 - Differentiators
 
-Structured intake is on main. C owns verification of n8n in the shared demo environment.
+The shared-repair, high-value invoice, and partner-discovery backends are on `main`. The next browser milestone is showing one HeatFix job and appointment across two resident cases.
 
 - [x] B: detect loss of heating across two distinct units within 24 hours, reuse one consented job and update both case timelines.
-- [ ] A: show the shared repair and appointment on both unit screens. Rehearse two reports and one HeatFix inbox entry on the demo stack.
+- [ ] A: add the 4B / 2A demo selector and shared-repair cards. Let the dispatch case confirm the slot and show the confirmed appointment read-only on the linked case. Rehearse two reports and one HeatFix inbox entry.
 - [ ] C: deliver the simulated text-message outbox and one-click slot confirmation on the same case. Use the case timeline for building updates and the dispatch case for slot selection.
-- [x] B: hold a post-completion invoice above the €3,000 demo limit and record the simulated manager action. Exactly €3,000 closes automatically.
-- [ ] A: label the existing post-completion manager invoice action accurately when wiring `POST /api/cases/{id}/approve-invoice`. Rehearse €3,000.01.
+- [x] B: hold post-completion invoices above €3,000 for manager approval and audit that action. Exactly €3,000 closes automatically.
+- [ ] A: wire and label the post-completion manager approval control for `POST /api/cases/{id}/approve-invoice`. Add a €3,000.01 demo invoice option and verify exactly €3,000 still closes automatically.
 - [x] B: register a simulated internet provider through a capabilities manifest and document the move-in → offer → contract design.
 - [x] B: handle partner rejection or unavailability with human escalation.
 - [x] B: include the approved previous repair's case ID and date as source attribution.
 - [ ] (Lower priority) Add a second simulated heating provider without changing case-domain logic.
 - [ ] Include relevant caretaker or access information; never share a key-safe code automatically.
-- [ ] Preserve a complete portal fallback when n8n, OpenAI or network access fails.
+- [x] Provide deterministic and manual intake when OpenAI is unavailable, plus direct HeatFix dispatch when n8n is disabled.
 - [ ] Support an optional repair photo; AI may describe it but may not diagnose the fault.
 
 ## Organizer follow-ups outside the typed P0 checkpoint
@@ -175,7 +182,7 @@ Structured intake is on main. C owns verification of n8n in the shared demo envi
 
 ## Next team handoffs
 
-- **A - Frontend:** surface pending HeatFix delivery after inbox reload and rehearse retrying it from the portal.
-- **B - Backend:** P1 adds building repair progress on each case, manager invoice approval, and partner discovery. Demo the two seeded units first and keep the P0 typed single-unit flow as the fallback. See the [connector contract](connector-spec.md).
-- **C - Integrations:** verify dispatch in the shared demo environment. The merged typed intake route is `POST /api/intake/extract`.
+- **A - Frontend:** surface and rehearse pending HeatFix callback retries, build the two-unit browser demo, and connect manager invoice approval. Own the browser rehearsal and pitch.
+- **B - Backend:** support the two-unit rehearsal and verify that both timelines follow one consented job and booking. See the [connector contract](connector-spec.md).
+- **C - Integrations:** verify n8n dispatch in the shared demo and check the configured OpenAI model path. Pair with A on dictation verification, then implement the simulated text-message outbox and booking link.
 - **C — Connector documentation:** add the [HeatFix callback recovery wording](assumptions.md) to the callback section of the connector spec.
