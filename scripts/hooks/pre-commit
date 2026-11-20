@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Blocks commits that contain secrets or junk. Installed via: git config core.hooksPath scripts/hooks
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+bad=$(echo "$staged" | grep -E '(^|/)\.env$|(^|/)\.env\.[^e]|\.db$|(^|/)node_modules/|(^|/)__pycache__/|(^|/)\.venv/|(^|/)\.coverage($|\.)' || true)
+if [ -n "$bad" ]; then
+  echo "BLOCKED: these files must not be committed:"; echo "$bad"
+  echo "Fix: git restore --staged <file>"; exit 1
+fi
+if git diff --cached -U0 | grep -E '^\+' | grep -qE 'sk-(proj-)?[A-Za-z0-9_-]{30,}|sk_[a-f0-9]{40,}'; then
+  echo "BLOCKED: an API key appears in your staged changes. Remove it (keys belong in backend/.env only)."; exit 1
+fi
+exit 0

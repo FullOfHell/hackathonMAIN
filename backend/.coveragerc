@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = app
+
+[report]
+# Team agreement: CI fails below this. Current baseline is ~91%; don't lower without telling the team.
+fail_under = 75
+show_missing = True
+skip_covered = True

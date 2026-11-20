@@ -55,6 +55,12 @@ Do not duplicate business rules in the UI or n8n. UI actions and partner callbac
 - State assumptions explicitly in `Docs/assumptions.md` when implementation begins.
 - Update the README when real startup commands or major architecture decisions change.
 
+## Push and merge requirements
+
+- Run once per clone: `git config core.hooksPath scripts/hooks` (blocks secrets on commit, runs backend tests before push).
+- Never push directly to `main`; open a PR. CI (`.github/workflows/ci.yml`) must be green: repo-safety, backend tests with branch coverage >= 75% (`backend/.coveragerc`), frontend type-check and build.
+- New backend behaviour needs tests in the same PR; do not lower the coverage threshold to get green.
+
 ## Definition of done for a change
 
 - The intended behavior works from the relevant user or API boundary.
