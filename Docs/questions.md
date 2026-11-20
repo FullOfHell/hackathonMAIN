@@ -1,0 +1,1 @@
+1. Should the resident be able to change their personal data (address, heater model, etc.)? Is their account/info given by you, do they have to make a request to change it, etc.?

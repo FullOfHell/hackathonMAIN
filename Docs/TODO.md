@@ -76,8 +76,9 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Build the property-manager unit view with cases, sharing approvals and confirmed appointments.
 - [x] Display the persisted timeline after the initial partner handoff.
 - [x] Refresh the resident timeline through booking and show it in the manager view.
-- [ ] Show the repair outcome and linked invoice on the resident and manager views.
-- [ ] Drive all visible progress from backend state, not UI-only state.
+- [x] Wire repair start, completion and synthetic invoice submission into the HeatFix inbox.
+- [x] Show the repair outcome and linked invoice in resident and manager views.
+- [x] Drive live case progress from backend responses and the persisted timeline.
 
 ## P0 - AI intake
 
@@ -114,38 +115,40 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test duplicate and invalid partner callbacks.
 - [x] Test repair completion and invoice linking across retries and restart.
 - [x] Test unavailable-provider escalation.
-- [ ] Rehearse the entire typed workflow repeatedly.
+- [x] Verify the typed report-to-invoice flow in the browser against local FastAPI and offline fixtures.
+- [ ] Rehearse the full typed demo with live n8n enabled.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
 
 ## P0 - Product / Frontend remaining work
 
-1. **Repair completion and invoice.** Wire HeatFix start, complete and invoice actions to the [connector API](connector-spec.md). Show the returned documents on the resident and manager views.
-2. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
-3. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
+1. **Intake handoff.** Connect structured extraction when C publishes the API. Typed intake already works with an optional hot-water follow-up.
+2. **Demo and QA.** Rehearse from a fresh seed with live n8n enabled. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 
 ## P1 - Differentiators
 
-Implement in this order after P0 is stable:
+Backend work is underway on `backend/P1` while C finishes P0 intake and live n8n verification. Keep the typed P0 checkpoint as the integration gate for the demo.
 
-- [ ] Add a partner-unavailable or rejection branch with human escalation.
-- [ ] Surface relevant previous-repair context with source attribution and no diagnosis.
-- [ ] Add a second simulated provider without changing case-domain logic.
-- [ ] Detect two heating cases in one building within 24 hours and route one central-heating job.
+- [x] B: detect loss of heating across two distinct units within 24 hours, reuse one consented job and update both case timelines.
+- [ ] A: show the shared repair and appointment on both unit screens. Rehearse two reports and one HeatFix inbox entry on the demo stack.
+- [ ] C: deliver the simulated text-message outbox and one-click slot confirmation on the same case. Use the case timeline for building updates and the dispatch case for slot selection.
+- [x] B: hold invoices above €3,000 for manager approval and audit the approval. Exactly €3,000 closes automatically.
+- [ ] A: wire the manager approval control to `POST /api/cases/{id}/approve-invoice` and rehearse €3,000.01.
+- [x] B: register a simulated internet provider through a capabilities manifest and document the move-in → offer → contract design.
+- [x] B: handle partner rejection or unavailability with human escalation.
+- [x] B: include the approved previous repair's case ID and date as source attribution.
+- [ ] (Lower priority) Add a second simulated heating provider without changing case-domain logic.
 - [ ] Include relevant caretaker or access information; never share a key-safe code automatically.
-- [ ] Add ElevenLabs voice through the same backend tools as the portal.
-- [ ] Preserve a complete typed fallback when voice or network access fails.
-- [ ] Allow a voice conversation to continue in the portal without repeating information.
+- [ ] Preserve a complete portal fallback when n8n, OpenAI or network access fails.
 - [ ] Support an optional repair photo; AI may describe it but may not diagnose the fault.
 
 ## P2 - Optional; skip if the demo is at risk
 
-- [ ] Add another service category such as internet or energy.
-- [ ] Add real email or messaging integrations.
+- [ ] Full internet move-in flow end to end (beyond registration and spec).
+- [ ] Send real SMS/email (the P1 outbox is simulated).
 - [ ] Add more complex provider optimization.
 - [ ] Add operational analytics or dashboards.
-- [ ] Add manager approval for costly invoices.
 - [ ] Add payment processing or real contractor bookings.
 - [ ] Add multi-organization administration.
 
@@ -162,6 +165,6 @@ Implement in this order after P0 is stable:
 
 ## Next team handoffs
 
-- **A - Frontend:** extend the existing partner, resident and manager views with repair completion and invoices.
-- **B - Backend:** the P0 case, booking, repair, invoice and failure APIs are ready for A and C. The [closed-case fixture](../shared/fixtures/case-closed.json) matches the unit history response for a completed and invoiced case.
+- **A - Frontend:** connect structured extraction when ready and rehearse the full browser flow.
+- **B - Backend:** P1 adds building repair progress on each case, manager invoice approval, and partner discovery. Demo the two seeded units first and keep the P0 typed single-unit flow as the fallback. See the [connector contract](connector-spec.md).
 - **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.

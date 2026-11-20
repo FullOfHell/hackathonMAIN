@@ -55,7 +55,7 @@ The track explicitly provides **no centrix API and no dataset**. We must make re
 
 **Trigger:** A resident reports that the heating in their apartment has stopped working.  
 **Partner:** A simulated heating/repair contractor.  
-**Resident channel:** Web portal with conversational text as the reliable baseline, ElevenLabs voice agent as enhancement.  
+**Resident channel:** Web portal (P0) plus a text-message channel with one-click links (P1, simulated outbox). Tenants mostly text and phone; younger tenants are moving to the platform. No voice agent: Reltix already has one that auto-fills the app (see `Docs/mentor-feedback.md`).  
 **Partner channel:** Lightweight partner dashboard or mock API.  
 **Result:** A booked visit, completed repair report, and invoice linked to the original property/unit/case.
 
@@ -67,10 +67,10 @@ The track explicitly provides **no centrix API and no dataset**. We must make re
 
 | Official capability | What we deliver | Priority |
 |---|---|---|
-| 1. Detect the moment | A centrix event (`maintenance.case_created`) fires from the resident's portal/voice report. P1: building-wide detection, where two or more units in the same property reporting no heating within 24 h are linked to one central-heating job instead of duplicate call-outs, and all affected tenants are informed. P2: an inbound tenant email in the centrix inbox is classified into the same event. | P0 / P1 / P2 |
+| 1. Detect the moment | A centrix event (`maintenance.case_created`) fires from the resident's portal or text-message report. P1 (mentor-confirmed as realistic): building-wide detection, where two or more units in the same property reporting no heating within 24 h are linked to one central-heating job instead of duplicate call-outs, and all affected tenants are informed. P2: an inbound tenant email in the centrix inbox is classified into the same event. | P0 / P1 / P2 |
 | 2. Hand over context | The unit snapshot (address, unit, heating type, building year, prior heating case, access details such as caretaker or key safe) is pre-filled into the partner job. The tenant only adds symptoms and availability. P1: optional photo upload, attached to the job; AI describes it, but never diagnoses. | P0 / P1 |
-| 3. Hold the conversation | Portal chat (P0), ElevenLabs voice through the same backend tools (P1), cross-channel continuity (P1). Partner side: partner dashboard (P0). | P0 / P1 |
-| 4. Close the loop | Appointment, completion report and invoice are linked to the case and unit. Tenant and manager are updated at every transition. P2: invoices above a cost threshold require manager approval before they are accepted. | P0 / P2 |
+| 3. Hold the conversation | Portal chat (P0). Text-message channel (P1): the resident receives a pre-filled message with one-click links to confirm a slot or follow the case, continuing the same case as the portal. Partner side: partner dashboard (P0). No voice agent; Reltix already has one. | P0 / P1 |
+| 4. Close the loop | Appointment, completion report and invoice are linked to the case and unit. Tenant and manager are updated at every transition. P1: centrix approves repair costs up to €3,000; invoices above €3,000 are flagged for manager approval instead of closing silently. | P0 / P1 |
 
 Trigger event, in the same shape as the brief's example payload:
 
@@ -101,7 +101,7 @@ A tester can: **report broken heating → create a persistent case → share the
 
 ```mermaid
 flowchart TD
-    A[Resident opens portal / voice agent] --> B[Report: no heating]
+    A[Resident opens portal / replies to text message] --> B[Report: no heating]
     B --> C[AI extracts issue and asks only missing questions]
     C --> D[Look up unit and previous heating cases]
     D --> E[Show context and request approval for partner hand-off]
@@ -152,7 +152,7 @@ Support explicit alternate branches: `DECLINED`, `NO_PROVIDER_AVAILABLE`, `CANCE
 8. Switch to manager/unit view: show exact case, partner, appointment, invoice, tenant notification and event timeline.
 9. Briefly show the connector interface and explain how a second contractor plugs in.
 
-**Always have a typed-input fallback** for microphone issues or unreliable venue internet.
+**Always have a local fallback** for unreliable venue internet: the portal flow must work without n8n or OpenAI.
 
 ---
 
@@ -166,7 +166,7 @@ Support explicit alternate branches: `DECLINED`, `NO_PROVIDER_AVAILABLE`, `CANCE
 | Domain API and state machine | Python + FastAPI + Pydantic | Team backend |
 | Persistence | SQLite for hackathon | Team backend |
 | Conversational understanding | OpenAI structured extraction (or another available LLM) | AI integration |
-| Resident voice | ElevenLabs conversational agent | AI/voice integration |
+| Resident messaging | Simulated SMS/email outbox with one-click links (no real sending) | AI/Integrations |
 | Orchestration | n8n webhooks, HTTP Request, IF/Switch | Workflow integration |
 | External service | Local/deployed **mock partner API** and dashboard | Workflow/backend |
 
@@ -175,12 +175,12 @@ Support explicit alternate branches: `DECLINED`, `NO_PROVIDER_AVAILABLE`, `CANCE
 - **FastAPI is the source of truth:** property data, tenants, authorization, cases, status transitions, appointments, documents and invoices.
 - **n8n handles integration orchestration:** react to events, send jobs, process partner events, notify services and retry failures.
 - **The LLM interprets language:** extract the problem and missing details, generate user-friendly responses. It must **not** fabricate bookings or directly force arbitrary status changes.
-- **ElevenLabs provides a voice interface:** same backend tools and case model as the typed portal.
+- **Text-message channel:** outbound messages are persisted in an outbox and link back to the same case; one-click actions call the same backend endpoints as the portal.
 - **Partner connector abstracts providers:** a stable request/status interface, independent of the provider's API or dashboard.
 
 ### Deployment/network rule
 
-If using n8n Cloud or hosted ElevenLabs webhooks, they cannot call a backend that is only reachable on a developer's `localhost`. Use a secured, reachable HTTPS deployment/tunnel for inbound calls, or run everything on one reachable host. Keep secrets out of the React app. Have a local deterministic demo fallback if a third-party service is unavailable.
+If using n8n Cloud, it cannot call a backend that is only reachable on a developer's `localhost`. Use a secured, reachable HTTPS deployment/tunnel for inbound calls, or run everything on one reachable host. Keep secrets out of the React app. Have a local deterministic demo fallback if a third-party service is unavailable.
 
 ---
 
@@ -289,7 +289,7 @@ The payload is illustrative. **Minimize data sharing:** do not send the resident
 - **Authenticated:** Shared secret or signed webhook for demo; verify provider identity before accepting state changes.
 - **Resilient:** Timeouts, failed bookings and partner rejection are visible, with a human escalation path.
 - **Versioned:** Specify schema version, required and optional fields, event types and error codes.
-- **Extensible:** Document what would change to support an internet or energy partner later, without actually implementing a second service flow.
+- **Cross-category:** Reltix must be able to add an internet partner at a moment's notice (mentor). The spec covers partners that *deliver* a service (jobs, slots, completion, invoice) and partners that *sell* one (offers, contract signed), with the internet move-in flow as the worked example.
 
 ---
 
@@ -325,11 +325,11 @@ A possible transparent scoring heuristic (only among eligible providers) is:
 
 These weights are **our proposal**, not an official Reltix algorithm. For one partner, use the same routing interface so the architecture is demonstrably extensible.
 
-### D. AI and voice safety boundaries
+### D. AI safety boundaries
 
 - AI can ask questions and explain the current state, **not invent a status**.
 - Only the backend may approve state transitions.
-- Voice agent invokes authenticated tools (`get_unit_context`, `create_case`, `get_case_status`, `confirm_slot`).
+- Any agent (including Reltix's existing voice agent) uses the same authenticated endpoints (`get_unit_context`, `create_case`, `get_case_status`, `confirm_slot`); we do not build a voice agent.
 - Explicit user confirmation for booking and for any relevant personal-data handoff; keep a recorded audit entry.
 - Urgent safety statements (e.g., suspected gas leak) should show a predetermined emergency escalation message, not attempt a conversational diagnosis.
 
@@ -383,11 +383,11 @@ Keep all sensitive tokens in n8n credentials/environment secrets. Avoid hard-cod
 - Current service partner, status history, appointment and invoice attachment.
 - Evidence of what tenant approved for partner sharing.
 
-### Screen D — ElevenLabs voice (P1)
+### Screen D — Text-message outbox (P1)
 
-- Start a conversation with the same tenant context.
-- Collect a report and call the same backend tools used by typed input.
-- If voice fails, allow an immediate transition to typing without losing the case.
+- Shows the simulated SMS/email messages sent to the resident at each step (request received, slots offered, appointment confirmed, repair done).
+- Each message has one-click links (confirm slot, view case) that call the same backend endpoints as the portal.
+- Messages are persisted and linked to the case; nothing is really sent.
 
 **Do not prioritize:** complex analytics, payment processing, full landlord administration, authentication for many organizations, fancy map views, dozens of service types, real contractor marketplaces.
 
@@ -414,17 +414,19 @@ Keep all sensitive tokens in n8n credentials/environment secrets. Avoid hard-cod
 
 ### P1 — high-value differentiation, only after P0 works
 
-- [ ] ElevenLabs conversational voice reporting via backend tools.
+- [ ] Building-wide outage detection (mentor-confirmed; first differentiator).
+- [ ] Text-message channel: simulated outbox with one-click slot confirmation, same case as the portal.
+- [ ] Cost warning: invoices above €3,000 flagged for manager approval (centrix approves up to €3,000).
+- [ ] Internet partner through the connector: capabilities registration plus spec walkthrough (move-in → offer → contract → unit). Minimal flow only if time allows.
 - [ ] Context-aware previous-repair reference with source attribution.
-- [ ] Cross-channel continuity: voice conversation continues in portal.
 - [ ] One failure branch: partner rejects or has no available slots, then graceful escalation.
-- [ ] Demonstrate second simulated repair provider using the same connector contract. Adding it should require only a provider registration (capabilities, region, endpoint) and an adapter, with no change to case-domain code. Show this in the video.
-- [ ] Building-wide outage detection: deterministic rule (≥2 units, same property, `heating_repair`, within 24 h) links cases to one partner job and notifies all affected tenants.
+- [ ] (Lower priority) Demonstrate a second simulated repair provider using the same connector contract. Adding it should require only a provider registration (capabilities, region, endpoint) and an adapter, with no change to case-domain code. Show this in the video.
+- [ ] Building-wide outage rule details: deterministic rule (≥2 units, same property, `heating_repair`, within 24 h) links cases to one partner job and notifies all affected tenants.
 - [ ] Access details and photos in the partner job (caretaker/key-safe info from seed data; optional photo upload).
 
 ### P2 — explicitly optional
 
-- [ ] Additional service category (internet, energy, etc.).
+- [ ] Full internet move-in flow end to end (beyond registration and spec).
 - [ ] Resident messaging/email integration beyond on-screen notifications.
 - [ ] Smarter multi-provider optimization or cost comparison.
 - [ ] Operational dashboard and analytics.
@@ -439,7 +441,7 @@ This project has **three contributors**. Use the ownership split below to reduce
 |---|---|---|---|
 | A — Product / Frontend | Tenant, manager and partner views; demo UX; pitch flow | UI skeleton wired to agreed example payloads | Consumes backend contracts; owns the repeatable demo path |
 | B — Backend / Domain | FastAPI, SQLite, models, case state machine, seed data, tests | Persistent case API and immutable event timeline | Publishes validated case and context contracts |
-| C — AI / Integrations | Structured extraction, mock partner connector, n8n, optional ElevenLabs | Partner receives exactly one job and can send a validated event | Uses backend transitions; owns external fallbacks and connector docs |
+| C — AI / Integrations | Structured extraction, mock partner connector, n8n, text-message channel | Partner receives exactly one job and can send a validated event | Uses backend transitions; owns external fallbacks and connector docs |
 
 All three contributors review shared contract changes. Owner A can build against fixtures while Owner B stabilizes the API; Owner C can build the connector against the same fixtures. Replace fixtures with live calls as soon as the contract endpoint exists.
 
@@ -464,8 +466,8 @@ The team works through the night with staggered naps. Owners follow the table ab
 | 19:00–19:45 | Dinner | | | |
 | 19:45–23:30 | Slot selection, manager/unit view | Slots, booking, callbacks, invoice document, signature check | LLM extraction with deterministic fallback; n8n Workflow 2 (partner responds) | |
 | **23:30–00:00** | **Checkpoint: full typed flow end to end. Tag `demo-p0`.** If not working, cut P1 and fix. | | | |
-| 00:00–03:00 | Timeline polish, failure-state UI | Failure branch, building-wide detection rule | ElevenLabs voice on the same backend tools | Naps: A 01:00–02:15, C 02:15–03:30 |
-| 03:00–06:00 | UX polish, realistic demo data | Second provider through the connector, tests | `connector-spec.md`, `assumptions.md`, pitch script | Nap: B 03:30–04:45 |
+| 00:00–03:00 | Timeline polish, failure-state UI | Failure branch, building-wide detection rule, €3,000 cost warning | Text-message outbox with one-click links | Naps: A 01:00–02:15, C 02:15–03:30 |
+| 03:00–06:00 | UX polish, realistic demo data | Internet partner registration through the connector, tests | `connector-spec.md`, `assumptions.md`, pitch script | Nap: B 03:30–04:45 |
 | **Sat 06:00** | **Feature freeze. Tag `demo-final`. Bug fixes only after this point.** | | | |
 | 06:00–08:00 | Record demo footage and voiceover | | | |
 | 08:00–09:30 | Edit the 3-minute video; README startup commands; confirm the pushed code equals `demo-final` | | | |
@@ -474,9 +476,9 @@ The team works through the night with staggered naps. Owners follow the table ab
 ### 3-minute video outline
 
 1. **0:00–0:15** Problem: a broken heater takes a dozen calls and emails.
-2. **0:15–1:45** The flow: report (voice or chat) → context pre-filled → approval → partner receives job → slot booked → completion and invoice → unit view and timeline.
-3. **1:45–2:15** One differentiator that is stable at freeze: building-wide detection or the failure/escalation branch.
-4. **2:15–2:40** Connector spec, and the second provider plugged in without changing case logic.
+2. **0:15–1:45** The flow: report (portal or text message) → context pre-filled → approval → partner receives job → slot booked → completion and invoice → unit view and timeline.
+3. **1:45–2:15** One differentiator that is stable at freeze: building-wide detection (mentor-confirmed), plus the €3,000 cost warning if stable.
+4. **2:15–2:40** Connector spec, and an internet partner plugged in without changing case logic (Reltix's own ask).
 5. **2:40–3:00** Why heating repair, measurable value, what is simulated.
 
 ### Suggested repo layout
@@ -489,7 +491,7 @@ reltix-hackathon/
       api/               # FastAPI routes
       models/            # DB entities and schemas
       services/          # case transitions, routing, context lookup
-      integrations/      # generic provider adapter, ElevenLabs tools
+      integrations/      # generic provider adapter, message outbox
     tests/
     seed_data/
   n8n/                   # exportable workflows (without credentials)
@@ -521,7 +523,9 @@ reltix-hackathon/
 | Duplicate partner callback | No duplicate event or invoice |
 | Invalid callback signature | Event is rejected, no case changes |
 | Provider unavailable | Clear human escalation/failure state |
-| Voice unavailable | Typed workflow still works end to end |
+| n8n or OpenAI unavailable | Portal workflow still works end to end |
+| Invoice above €3,000 | Case flagged for manager approval; not silently closed |
+| Second heating report in same property within 24 h | Linked to the existing central-heating job; no duplicate call-out |
 
 ### Qualitative evaluation against the rubric
 
@@ -537,7 +541,7 @@ reltix-hackathon/
 
 | Risk | Mitigation |
 |---|---|
-| ElevenLabs or microphone fails live | Maintain complete typed chat path |
+| Building-wide rule merges unrelated cases | Same property + `heating_repair` + 24 h window only; manager can unlink |
 | Hosted n8n cannot reach local backend | Deploy securely or use a temporary HTTPS tunnel; test early |
 | LLM hallucinates a repair diagnosis or booking | Validate structured output, use backend truth, show unknown status |
 | Partner response never arrives | Mock dashboard can emit deterministic callback; show timeout handling |
@@ -572,8 +576,8 @@ reltix-hackathon/
 
 1. Agree on **broken heater → repair partner** as the only required service flow, and pick the project name (required for submission).
 2. Freeze `/api/cases`, `/api/units/{unit_id}/context`, partner `POST /jobs`, and the callback contract; commit shared example JSON.
-3. Collect API access: OpenAI key (BuilderBase → Resources → Reveal), ElevenLabs key (via Discord), n8n link (file in BuilderBase Resources). Document variable names in `.env.example`; never commit values.
-4. Before 18:00, test the two network risks: ElevenLabs tool call and n8n webhook each reaching the backend through a public HTTPS tunnel.
+3. Collect API access: OpenAI key (BuilderBase → Resources → Reveal), n8n link (file in BuilderBase Resources). Document variable names in `.env.example`; never commit values.
+4. Before 18:00, test the network risk: the n8n webhook reaching the backend through a public HTTPS tunnel. (ElevenLabs dropped after mentor feedback.)
 5. Seed one tenant/unit, one historical heating case, access details and one contractor.
 6. Implement the first vertical slice: **create persistent case → mock partner receives job**.
 

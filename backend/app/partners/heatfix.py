@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
-from app.schemas import FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
+from app.schemas import BuildingJobScope, FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
 
 PARTNER_ID = "p_heatfix"
 router = APIRouter(prefix="/partners/heatfix", tags=["mock partner: HeatFix"])
@@ -26,16 +26,10 @@ ALLOWED_JOB_ACTIONS = {
 
 
 @router.get("/connector/capabilities")
-def capabilities():
-    return {
-        "schema_version": "1.0",
-        "partner_id": PARTNER_ID,
-        "service_types": ["heating_repair"],
-        "regions": ["Aachen"],
-        "required_fields": ["address", "unit", "issue"],
-        "optional_fields": ["heating_type", "access_details", "name", "contact", "previous_record"],
-        "events": list(ALLOWED_JOB_ACTIONS),
-    }
+def capabilities(conn=Depends(get_db)):
+    row = conn.execute("SELECT manifest FROM partner_capabilities WHERE partner_id=?", (PARTNER_ID,)).fetchone()
+    manifest = json.loads(row["manifest"])
+    return {**manifest, "service_types": manifest["categories"]}
 
 
 @router.post("/connector/jobs", status_code=201)
@@ -62,6 +56,22 @@ def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db))
 def list_jobs(conn=Depends(get_db)):
     return [{**dict(j), "payload": json.loads(j["payload"])}
             for j in conn.execute("SELECT * FROM partner_jobs WHERE partner_id=? ORDER BY received_at DESC", (PARTNER_ID,))]
+
+
+@router.put("/connector/jobs/{job_id}/scope")
+def set_building_scope(job_id: str, body: BuildingJobScope, conn=Depends(get_db)):
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        job = get_job(job_id, conn)
+        if body.request_id != job["request_id"]:
+            raise HTTPException(409, "scope update does not match the original request")
+        if job["payload"]["issue"].get("repair_scope") == body.scope:
+            return {"job_id": job_id, **body.model_dump()}
+        if job["status"] in ("completed", "invoice_ready", "rejected", "failed"):
+            raise HTTPException(409, "only an active job can acquire building scope")
+        job["payload"]["issue"]["repair_scope"] = body.scope
+        conn.execute("UPDATE partner_jobs SET payload=? WHERE id=?", (json.dumps(job["payload"]), job_id))
+    return {"job_id": job_id, **body.model_dump()}
 
 
 @router.get("/connector/jobs/{job_id}")

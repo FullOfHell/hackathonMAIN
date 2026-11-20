@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
-import { CaseProgress, CaseTimeline } from './CaseViews'
-import { formatTime, slotLabel, statusLabel } from './caseDisplay'
+import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
+import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeReview } from './intake'
-import type { IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerInboxJob, UnitContext } from './types/domain'
+import type {
+  IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerCommand,
+  PartnerInboxJob, RepairInvoiceInput, UnitContext,
+} from './types/domain'
 import './Portal.css'
 
 const shortcuts = ['No heat at all', 'Radiators are lukewarm', 'Some radiators are cold']
@@ -22,17 +25,25 @@ function useLoad<T>(load: () => Promise<T>) {
     )
     return () => { active = false }
   }, [load, attempt])
-  return { ...result, reload: () => { setResult({}); setAttempt((value) => value + 1) } }
+  return {
+    ...result,
+    refreshing: attempt > 0 && !result.data && !result.failed,
+    refreshed: attempt > 0 && Boolean(result.data),
+    reload: () => { setResult({}); setAttempt((value) => value + 1) },
+  }
 }
 
 const unitId = 'unit_4b'
 const loadHome = () => api.getUnitContext(unitId)
 const loadUnitCases = () => api.listUnitCases(unitId)
-const views = { '#report': 'Report broken heating', '#inbox': 'HeatFix Aachen inbox', '#manager': 'Property manager' }
+const views = {
+  '#report': 'Report broken heating', '#cases': 'My cases',
+  '#inbox': 'HeatFix Aachen inbox', '#manager': 'Property manager',
+}
 
 function currentView(): keyof typeof views {
   const hash = location.hash
-  return hash === '#inbox' || hash === '#manager' ? hash : '#report'
+  return hash === '#cases' || hash === '#inbox' || hash === '#manager' ? hash : '#report'
 }
 
 function App() {
@@ -50,6 +61,7 @@ function App() {
             <a className="brand" href="#report">centrix</a>
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
+              <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
               <a href="#inbox" aria-current={view === '#inbox' ? 'page' : undefined}>HeatFix inbox</a>
               <a href="#manager" aria-current={view === '#manager' ? 'page' : undefined}>Manager</a>
             </div>
@@ -59,6 +71,7 @@ function App() {
       </header>
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
+        {view === '#cases' && <ResidentCases />}
         {view === '#inbox' && <Inbox />}
         {view === '#manager' && <Manager />}
       </main>
@@ -116,6 +129,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const fields = current ? sharingFields(home, current) : []
   const request = current?.sharing_request
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
+  const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
 
   async function inspectDraft(input: IntakeRequest) {
     if (submitting.current || input.report.length < 3) return
@@ -174,7 +188,9 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     event.preventDefault()
     if (safety) return
     if (question && followUp.trim()) answerQuestion(followUp)
-    else if (!question) void inspectDraft({ report: issue.trim(), hot_water_affected: hotWater })
+    else if (!question) void inspectDraft({
+      report: issue.trim(), hot_water_affected: isFixtureMode && hotWaterReported ? null : hotWater,
+    })
   }
 
   async function save(event: FormEvent) {
@@ -268,6 +284,14 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
                 onClick={() => { setIssue((value) => value.trim() ? value.trim() + '\n' + text : text); setSafety(false) }}
                 disabled={busy || issue.trim().length + text.length + 1 > reportLimit}>{text}</button>)}
             </div>
+            {isFixtureMode && !hotWaterReported && <fieldset>
+              <legend>Is hot water also affected? <span className="muted">(optional)</span></legend>
+              <div className="radio-group">
+                {([[true, 'Yes'], [false, 'No'], [null, 'Not sure']] as const).map(([value, label]) =>
+                  <label key={label}><input type="radio" name="hot-water" checked={hotWater === value}
+                    onChange={() => setHotWater(value)} /> {label}</label>)}
+              </div>
+            </fieldset>}
             <div className="actions"><button disabled={busy || safety || issue.trim().length < 3}>
               {busy ? 'Checking report…' : 'Review summary'}
             </button></div>
@@ -362,7 +386,12 @@ function Inbox() {
   const jobs = useLoad(api.listPartnerJobs)
   return (
     <section className="inbox" aria-label="Incoming repair jobs">
-      <div className="inbox-heading"><h2>Incoming jobs</h2><button className="secondary" onClick={jobs.reload}>Refresh</button></div>
+      <div className="inbox-heading"><h2>Incoming jobs</h2>
+        <button className="secondary" disabled={jobs.refreshing} onClick={jobs.reload}>
+          {jobs.refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+      {jobs.refreshed && <p className="muted" role="status">Inbox updated.</p>}
       {jobs.failed ? <p className="panel error" role="alert">The HeatFix inbox could not be loaded. Try refreshing.</p>
         : !jobs.data ? <p className="panel" role="status">Loading jobs…</p>
           : !jobs.data.length ? <p className="panel">No jobs yet. Approved reports will appear here.</p>
@@ -371,34 +400,75 @@ function Inbox() {
   )
 }
 
-const labels: Record<PartnerAction, string> = { accept: 'Accept', reject: 'Reject', 'offer-slots': 'Offer slots' }
-const availableActions: Record<string, PartnerAction[]> = {
-  received: ['accept', 'reject'], accepted: ['offer-slots', 'reject', 'accept'],
-  slots_offered: ['offer-slots'], rejected: ['reject'],
+const labels: Record<PartnerAction, string> = {
+  accept: 'Accept', reject: 'Reject', 'offer-slots': 'Offer slots',
+  start: 'Start repair', complete: 'Complete repair', invoice: 'Submit demo invoice',
 }
-const statusForAction: Record<PartnerAction, string> = {
-  accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered',
+const availableActions: Record<string, PartnerAction[]> = {
+  received: ['accept', 'reject'], accepted: ['offer-slots', 'reject'],
+  scheduled: ['start'], in_progress: ['complete'],
+  completed: ['invoice'],
+}
+const jobChecks: Record<string, {
+  action: 'accept' | 'reject' | 'offer-slots' | 'start'
+  label: string
+  confirmation: string
+  missing: string
+  target?: string
+}> = {
+  accepted: {
+    action: 'accept', label: 'Check acceptance', confirmation: 'Acceptance confirmed on the resident case.',
+    missing: 'Acceptance is still missing from the resident case.',
+  },
+  rejected: {
+    action: 'reject', label: 'Check rejection', confirmation: 'Rejection confirmed on the resident case.',
+    missing: 'Rejection is still missing from the resident case.', target: 'DECLINED',
+  },
+  slots_offered: {
+    action: 'offer-slots', label: 'Check slot delivery', confirmation: 'The offered slots reached the resident case.',
+    missing: 'The offered slots have not reached the resident case.', target: 'SLOTS_OFFERED',
+  },
+  in_progress: {
+    action: 'start', label: 'Check repair start', confirmation: 'Repair start confirmed on the resident case.',
+    missing: 'Repair start is still missing from the resident case.', target: 'IN_PROGRESS',
+  },
+}
+
+function syntheticInvoice(jobId: string): RepairInvoiceInput {
+  return { invoice_number: 'HF-DEMO-' + jobId, description: 'Heating repair and labour', amount_cents: 12500, currency: 'EUR' }
 }
 
 function JobCard({ job: initial }: { job: PartnerInboxJob }) {
   const [job, setJob] = useState(initial)
   const [pending, setPending] = useState<PartnerAction | null>(null)
-  const [retry, setRetry] = useState<PartnerAction | null>(null)
+  const [retry, setRetry] = useState<PartnerCommand | null>(null)
+  const [editing, setEditing] = useState<'complete' | 'invoice' | null>(null)
+  const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [confirmation, setConfirmation] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
-  const actions = retry ? [retry] : availableActions[job.status] ?? []
+  const actions = retry ? [retry.action] : availableActions[job.status] ?? []
+  const check = jobChecks[job.status]
+  const invoice = syntheticInvoice(job.id)
 
-  async function act(action: PartnerAction) {
+  async function act(command: PartnerCommand) {
     if (submitting.current) return
     submitting.current = true
+    const { action } = command
     setPending(action)
     setError('')
+    setConfirmation('')
     try {
-      setJob(await api.updatePartnerJob(job.id, action))
+      const updated = await api.updatePartnerJob(job.id, command)
+      setJob(updated)
       setRetry(null)
+      setEditing(null)
+      const acknowledged = jobChecks[updated.status]
+      if (acknowledged?.action === action) setConfirmation(acknowledged.confirmation)
     } catch (failure) {
-      setRetry(action)
+      setRetry(command)
       setError(failure instanceof Error ? failure.message : 'The partner action could not be confirmed.')
     } finally {
       submitting.current = false
@@ -406,26 +476,78 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
     }
   }
 
+  async function checkDelivery() {
+    if (!check || submitting.current) return
+    submitting.current = true
+    setChecking(true)
+    setConfirmation('')
+    setError('')
+    try {
+      const events = await api.getCaseEvents(job.request_id)
+      const confirmed = events.some((event) => check.target
+        ? event.type === 'case.status_changed' && event.payload.to === check.target
+        : event.type === 'partner.accepted')
+      if (confirmed) {
+        setConfirmation(check.confirmation)
+      } else {
+        setRetry({ action: check.action })
+        setError(check.missing + ' Retry sending it.')
+      }
+    } catch {
+      setError('The resident case could not be checked. Try again.')
+    } finally {
+      submitting.current = false
+      setChecking(false)
+    }
+  }
+
+  function begin(action: PartnerAction) {
+    if (retry) void act(retry)
+    else if (action === 'complete' || action === 'invoice') setEditing(action)
+    else void act({ action })
+  }
+
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Heating repair</h3><span className="status" role="status">{statusLabel(job.status)}</span></div>
+      <div className="inbox-heading"><h3>Heating repair</h3><span className="status" role="status">{caseStatusLabel(job.status)}</span></div>
       <p>{property.address} · Unit {property.unit}</p>
       <p className="issue-copy">{issue.description}</p>
       {property.heating_type && <p>Heating · {property.heating_type}</p>}
       {resident.name && <p>Resident · {resident.name}</p>}
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
-      {error && <p className="error" role="alert">{error}</p>}
-      {actions.length > 0 && <div className="actions" aria-label="Partner job actions">
-        {actions.map((action) => {
-          const repeat = job.status === statusForAction[action]
-          return <button key={action} className={action === 'reject' || repeat ? 'secondary' : undefined}
-            disabled={Boolean(pending)} onClick={() => void act(action)}>
-            {pending === action ? 'Sending…' : retry === action ? 'Retry ' + labels[action].toLowerCase()
-              : repeat ? 'Check ' + ({ accept: 'acceptance', reject: 'rejection', 'offer-slots': 'slot delivery' }[action])
-                : labels[action]}
+      {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
+      {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
+        event.preventDefault()
+        if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })
+        if (editing === 'invoice') void act({ action: 'invoice', body: invoice })
+      }}>
+        {editing === 'complete' ? <label>Repair summary
+          <textarea rows={3} maxLength={2000} required value={summary}
+            onChange={(event) => setSummary(event.target.value)} disabled={Boolean(pending)} />
+        </label> : <p>Demo invoice {invoice.invoice_number} · €125.00 · {invoice.description}</p>}
+        <div className="actions">
+          <button type="submit" disabled={Boolean(pending) || (editing === 'complete' && !summary.trim())}>
+            {pending ? 'Saving…' : editing === 'complete' ? 'Save completion' : 'Confirm demo invoice'}
           </button>
-        })}
+          <button type="button" className="secondary" disabled={Boolean(pending)} onClick={() => setEditing(null)}>Back</button>
+        </div>
+      </form>}
+      {error && <p className="error" role="alert">{error}</p>}
+      {check && !retry && !editing && <div className="actions">
+        <button className="secondary" disabled={checking || Boolean(pending)} onClick={() => void checkDelivery()}>
+          {checking ? 'Checking resident case…' : check.label}
+        </button>
+      </div>}
+      {confirmation && <p className="muted" role="status">{confirmation}</p>}
+      {actions.length > 0 && (!editing || retry) && <div className="actions" aria-label="Partner job actions">
+        {actions.map((action) => (
+          <button key={action} className={action === 'reject' ? 'secondary' : undefined}
+            disabled={checking || Boolean(pending)} onClick={() => begin(action)}>
+            {pending === action ? 'Sending…' : retry?.action === action ? 'Retry ' + labels[action].toLowerCase()
+              : labels[action]}
+          </button>
+        ))}
       </div>}
     </article>
   )
@@ -450,12 +572,46 @@ function Manager() {
   )
 }
 
+function ResidentCases() {
+  const home = useLoad(loadHome)
+  const cases = useLoad(loadUnitCases)
+  const residentId = home.data?.residents[0]?.id
+  const ownCases = cases.data?.filter((item) => item.resident_id === residentId)
+
+  return (
+    <section className="inbox" aria-label="Resident cases">
+      <div className="inbox-heading">
+        <h2>Heating cases</h2>
+        <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh cases</button>
+      </div>
+      {home.failed || cases.failed ? <p className="panel error" role="alert">Your cases could not be loaded. Try refreshing.</p>
+        : !home.data || !ownCases ? <p className="panel" role="status">Loading your cases…</p>
+          : !ownCases.length ? <p className="panel">No heating reports yet.</p>
+            : ownCases.map((item) => <ResidentCase key={item.id} item={item} />)}
+    </section>
+  )
+}
+
+function ResidentCase({ item }: { item: MaintenanceCase }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <article className="panel job">
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
+      <p className="issue-copy">{item.description}</p>
+      <button className="secondary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        {expanded ? 'Hide case details' : 'View case details'}
+      </button>
+      {expanded && (item.partner_job_id ? <CaseProgress initial={item} active /> : <CaseTimeline caseId={item.id} />)}
+    </article>
+  )
+}
+
 function ManagerCase({ item }: { item: MaintenanceCase }) {
   const [showTimeline, setShowTimeline] = useState(false)
   const contractor = item.sharing_request?.partner.name ?? (item.partner_id === 'p_heatfix' ? 'HeatFix Aachen GmbH' : item.partner_id)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{statusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <dl className="home-details">
         <dt>Contractor</dt><dd>{contractor ?? 'Unassigned'}</dd>
@@ -464,6 +620,7 @@ function ManagerCase({ item }: { item: MaintenanceCase }) {
           : 'No approval recorded'}</dd>
         <dt>Appointment</dt><dd>{item.appointment ? slotLabel(item.appointment) : 'No confirmed appointment'}</dd>
       </dl>
+      <RepairOutcome item={item} />
       <button className="secondary" aria-expanded={showTimeline} onClick={() => setShowTimeline(!showTimeline)}>
         {showTimeline ? 'Hide timeline' : 'Show timeline'}
       </button>

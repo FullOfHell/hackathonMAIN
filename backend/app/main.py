@@ -13,6 +13,7 @@ from app.api.extract import router as intake_router  # noqa: E402
 from app.api.partner_events import router as partner_events_router  # noqa: E402
 from app.db import init_db  # noqa: E402
 from app.partners.heatfix import router as heatfix_router  # noqa: E402
+from app.partners.registry import router as registry_router  # noqa: E402
 from app.states import InvalidTransition  # noqa: E402
 
 
@@ -33,6 +34,7 @@ app.include_router(cases_router)
 app.include_router(intake_router)
 app.include_router(partner_events_router)
 app.include_router(heatfix_router)
+app.include_router(registry_router)
 
 
 @app.exception_handler(InvalidTransition)

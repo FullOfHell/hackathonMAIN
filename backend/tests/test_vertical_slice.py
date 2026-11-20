@@ -74,6 +74,19 @@ def test_unapproved_fields_are_not_shared(client):
     assert "access_details" not in job["payload"]["property"]
 
 
+def test_approved_prior_repair_identifies_source_record(client):
+    case = create_case(client)
+    # A newer open report is not a previous repair.
+    create_case(client)
+    fields = ["address", "unit", "issue", "prior_heating_case"]
+    result = client.post(f"/api/cases/{case['id']}/sharing-approval", json={
+        "approved_by": "c_202", "approved_fields": fields})
+    assert result.is_success
+    job, = client.get("/partners/heatfix/connector/jobs").json()
+    assert job["payload"]["issue"]["previous_record"]["source_case_id"] == "case_000"
+    assert job["payload"]["resident"] == {}
+
+
 def test_n8n_dispatch_retries_after_lost_acknowledgment(client, monkeypatch):
     webhook_url = "https://n8n.example.invalid/webhook/maintenance/sharing-approved"
     monkeypatch.setenv("N8N_CASE_WEBHOOK_URL", webhook_url)

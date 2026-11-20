@@ -11,6 +11,7 @@ Everyone - including AI coding tools - should read these files before changing t
 3. [`Docs/Reltix-Track-Description.pdf`](Docs/Reltix-Track-Description.pdf) - official Reltix challenge brief and final source of truth for track requirements.
 4. [`Docs/SpecialFeatures.md`](Docs/SpecialFeatures.md) - differentiators to attempt only after the core flow works.
 5. [`Docs/git-workflow.md`](Docs/git-workflow.md) - branch flow, push checks, CI, coverage and secret handling.
+6. [`Docs/mentor-feedback.md`](Docs/mentor-feedback.md) - Reltix mentor answers and the product decisions they changed.
 5. [`Docs/TODO.md`](Docs/TODO.md) - prioritized implementation checklist for the three-person team.
 
 If these documents conflict, the official track description wins for challenge requirements. `AGENTS.md` wins for repository working conventions.
@@ -38,7 +39,7 @@ The prototype uses synthetic residents, properties, partners, and documents. It 
 - A provider-neutral partner connector with versioned, idempotent requests and callbacks.
 - n8n for integration orchestration.
 - Structured LLM extraction for issue intake; the model never invents booking or repair status.
-- ElevenLabs voice as a P1 enhancement, with the typed portal as the reliable fallback.
+- Resident channels: the portal plus a simulated text-message outbox with one-click links. No voice agent, since Reltix already has one (see [mentor feedback](Docs/mentor-feedback.md)).
 
 The project plan describes the full demo. The implemented booking and callback contracts are in the [connector specification](Docs/connector-spec.md).
 
@@ -91,11 +92,13 @@ python -m uvicorn app.main:app --reload --port 8000
 
 Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLite databases in `backend/data/app.db` and upgrades existing cases in place. Defaults run both the centrix stand-in and simulated HeatFix on port 8000. For other addresses or a custom shared secret, set `PUBLIC_BACKEND_URL`, `PARTNER_BASE_URL` and `PARTNER_WEBHOOK_SECRET` in the environment or in `backend/.env`. See the [environment template](.env.example).
 
-For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI. If ElevenLabs needs to reach the backend, configure its reachable HTTPS origin in `PUBLIC_BACKEND_URL`.
+For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI.
 
 The [structured intake endpoint](Docs/structured-intake-contract.md) uses deterministic extraction by default. Set `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` in `backend/.env` to enable model suggestions.
 
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
+
+For the P1 backend demo, submit “No heat at all” from the two seeded units using FastAPI's interactive API. Approve one report and inspect both case timelines and the single HeatFix job. The backend also holds invoices over €3,000 for manager approval and loads simulated partner registrations from `backend/seed/partner-registrations/`. See the [API walkthrough](Docs/connector-spec.md#building-heating-reports).
 
 ## Three-person workflow
 
@@ -107,6 +110,11 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline.
+The browser flow runs from a typed report to a closed case with a synthetic invoice.
 
-The backend supports repair start, completion, and invoice attachment through `CLOSED`. The unit history returns the appointment and both downloadable documents. There is also an API to escalate declined, failed or unmatched cases for human review. The remaining browser work is to wire the repair actions and display the documents. See the [connector specification](Docs/connector-spec.md).
+1. In **Report**, describe the issue, review the summary, and approve the sharing request.
+2. In **HeatFix inbox**, accept the job and offer slots. Return to **Report** to confirm an offered time.
+3. In **HeatFix inbox**, select **Start repair**, then **Complete repair** and save a short summary.
+4. Submit the demo invoice. Open **My cases** or **Manager** to read the outcome and download the invoice JSON.
+
+See the [connector specification](Docs/connector-spec.md) for the API. Typed intake works independently of structured extraction.

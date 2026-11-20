@@ -10,6 +10,7 @@ from app.integrations.connector import DispatchUnconfirmed, book_slot, build_job
 from app.schemas import (DEFAULT_PROPOSED_FIELDS, REQUIRED_SHARED_FIELDS, SHAREABLE_FIELDS, CaseCreate,
                          DocumentKind, PartnerJobRequest, ResidentAction, ResidentSlotChoice, SharingApprovalIn)
 from app.services import cases as svc
+from app.services import outages
 from app.states import CaseStatus, check_transition
 
 router = APIRouter(prefix="/api", tags=["centrix"])
@@ -51,7 +52,8 @@ def get_unit_cases(unit_id: str, conn=Depends(get_db)):
 
 
 @router.post("/cases", status_code=201)
-def create_case(body: CaseCreate, conn=Depends(get_db)):
+def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(get_partner_client)):
+    conn.execute("BEGIN IMMEDIATE")
     ctx = svc.unit_context(conn, body.unit_id)
     if not ctx:
         raise HTTPException(404, "unit not found")
@@ -72,10 +74,12 @@ def create_case(body: CaseCreate, conn=Depends(get_db)):
         conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner["id"], case_id))
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
                        {"partner_id": partner["id"], "reason": "service_type + region match"})
+        outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
     else:
         svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system",
                        {"reason": "no active partner covers this service and region"})
     conn.commit()
+    outages.confirm_scope(conn, case_id, partner_client)
     return _with_sharing_request(conn, svc.get_case(conn, case_id))
 
 
@@ -122,8 +126,9 @@ def cancel_before_handoff(case_id: str, body: ResidentAction, conn=Depends(get_d
             raise HTTPException(403, "only the reporting resident can withdraw the request")
         if case["status"] == CaseStatus.CANCELLED:
             return case
-        if case["status"] != CaseStatus.AWAITING_SHARING_APPROVAL:
-            raise HTTPException(409, "only a case awaiting sharing approval can be withdrawn")
+        if case["status"] not in (CaseStatus.AWAITING_SHARING_APPROVAL, CaseStatus.LINKED_TO_BUILDING_REPAIR):
+            raise HTTPException(409, "only an unshared report can be withdrawn")
+        outages.withdraw(conn, case_id, case["building_repair"])
         svc.transition(conn, case_id, CaseStatus.CANCELLED, f"resident:{body.resident_id}")
         return svc.get_case(conn, case_id)
 
@@ -146,13 +151,18 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
 
     # Idempotent: a repeated approval after the job was requested returns the existing state.
     if case["sharing_approval"] and case["partner_job_id"]:
-        return _with_sharing_request(conn, case)
+        conn.commit()
+        outages.confirm_scope(conn, case_id, partner_client)
+        return svc.get_case(conn, case_id)
     if case["sharing_approval"] and case["status"] != CaseStatus.PARTNER_REQUESTED:
         raise HTTPException(409, "case is no longer awaiting partner dispatch")
 
     if not case["sharing_approval"]:
+        if case["status"] == CaseStatus.LINKED_TO_BUILDING_REPAIR:
+            raise HTTPException(409, "this report follows a building repair; no additional sharing is needed")
         svc.transition(conn, case_id, CaseStatus.PARTNER_REQUESTED, f"resident:{body.approved_by}",
                        {"partner_id": case["partner_id"]})
+        outages.claim_dispatch(conn, case_id, case["building_repair"])
         conn.execute("INSERT INTO sharing_approvals (case_id,partner_id,shared_fields,channel,approved_by,recorded_at) "
                      "VALUES (?,?,?,?,?,?)", (case_id, case["partner_id"], json.dumps(fields),
                                                body.channel, body.approved_by, now_iso()))
@@ -200,8 +210,39 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         svc.record_event(conn, case_id, "partner.job_requested", "system",
                          {"partner_id": partner["id"], "job_id": result["job_id"],
                           "duplicate": result.get("duplicate", False), "idempotency_key": job.idempotency_key})
+        if job.issue.get("repair_scope") == "building_heating":
+            outages.mark_scope_confirmed(conn, case["building_repair"]["outage_id"], case_id, result["job_id"])
     conn.commit()
+    outages.confirm_scope(conn, case_id, partner_client)
     return svc.get_case(conn, case_id)
+
+
+@router.post("/cases/{case_id}/sync-building-repair")
+def sync_building_repair(case_id: str, conn=Depends(get_db), partner_client=Depends(get_partner_client)):
+    building = _case_or_404(conn, case_id)["building_repair"]
+    if not building or not building["partner_job_id"]:
+        raise HTTPException(409, "a confirmed job is required to update the building repair")
+    if not outages.confirm_scope(conn, case_id, partner_client):
+        raise HTTPException(502, "partner has not confirmed the building scope; retry this action")
+    return svc.get_case(conn, case_id)
+
+
+@router.post("/cases/{case_id}/approve-invoice")
+def approve_invoice(case_id: str, conn=Depends(get_db)):
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        case = _case_or_404(conn, case_id)
+        if case["status"] == CaseStatus.CLOSED and conn.execute(
+            "SELECT 1 FROM case_events WHERE case_id=? AND type='invoice.manager_approved'", (case_id,)
+        ).fetchone():
+            return case
+        if case["status"] != CaseStatus.AWAITING_INVOICE_APPROVAL:
+            raise HTTPException(409, "no invoice is awaiting manager approval")
+        invoice = case["invoice"]
+        svc.record_event(conn, case_id, "invoice.manager_approved", "manager",
+                         {"invoice_number": invoice["invoice_number"], "amount_cents": invoice["amount_cents"]})
+        svc.transition(conn, case_id, CaseStatus.CLOSED, "manager")
+        return svc.get_case(conn, case_id)
 
 
 def _already_booked(case: dict, slot_id: str) -> bool:
