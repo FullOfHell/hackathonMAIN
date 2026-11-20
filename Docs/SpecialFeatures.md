@@ -24,6 +24,18 @@ Demonstrate one realistic branch such as no provider availability or a rejected 
 
 Plug a second simulated heating provider into the existing connector contract without changing case-domain logic. This is the strongest evidence that the connector is reusable.
 
+### Building-wide outage detection
+
+When two or more units in the same property report no heating within 24 hours, link the cases to one central-heating job instead of sending several craftsmen, and notify all affected tenants. Deterministic rule in the backend; strongest answer to the brief's "detect the moment".
+
+### Access details and photos
+
+Pre-fill access information (caretaker contact, key safe) from centrix and let the tenant attach a photo. The brief explicitly mentions sharing photos and access details with the craftsman. AI may describe a photo but never diagnose.
+
+### Manager approval for costly invoices
+
+Invoices above a configurable threshold wait for property-manager approval before the case closes. Uses the brief's "a human approves before it goes out" channel.
+
 ## Avoid during the hackathon
 
 - Multiple unrelated service categories before the repair flow is complete.

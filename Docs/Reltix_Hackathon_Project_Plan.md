@@ -4,7 +4,8 @@
 **Track:** Reltix — *Plug a Partner into centrix*  
 **Event:** MAIN Summit AI Hackathon, Maastricht, 20–21 November 2026  
 **Status:** Proposed implementation plan (not an official Reltix technical specification)  
-**Primary use case:** Broken heater → craftsman → booked repair → completed repair → invoice linked to unit
+**Primary use case:** Broken heater → craftsman → booked repair → completed repair → invoice linked to unit  
+**Submission deadline:** Saturday 21 November, 10:30 (GMT+1) via BuilderBase *Hand in*: project name, code (the same version as in the demo) and a 3-minute pitch video. **Feature freeze: Saturday 06:00.** Target submit time: 10:00.
 
 > **One-sentence pitch:** An AI property-service coordinator that does not merely create a ticket: it collects a tenant's issue, uses centrix property context, books a suitable craftsperson, tracks the work, and writes the outcome back to the property record.
 
@@ -59,6 +60,29 @@ The track explicitly provides **no centrix API and no dataset**. We must make re
 **Result:** A booked visit, completed repair report, and invoice linked to the original property/unit/case.
 
 **Why this service?** It is easy to understand in a short demo, uses genuine property context (unit, heating system, repair history), allows a clear partner hand-off, and has an observable final outcome. The official brief gives *broken heater → craftsman* as one of its examples.
+
+**Because it is an official example, other teams will likely build it too.** We differentiate on the parts most teams skip: a real *detect the moment* story beyond "tenant opens a chat", a closed loop that ends on the unit record, and a connector that visibly accepts a second provider without code changes in the case domain.
+
+### How we cover the four official capabilities
+
+| Official capability | What we deliver | Priority |
+|---|---|---|
+| 1. Detect the moment | A centrix event (`maintenance.case_created`) fires from the resident's portal/voice report. P1: building-wide detection, where two or more units in the same property reporting no heating within 24 h are linked to one central-heating job instead of duplicate call-outs, and all affected tenants are informed. P2: an inbound tenant email in the centrix inbox is classified into the same event. | P0 / P1 / P2 |
+| 2. Hand over context | The unit snapshot (address, unit, heating type, building year, prior heating case, access details such as caretaker or key safe) is pre-filled into the partner job. The tenant only adds symptoms and availability. P1: optional photo upload, attached to the job; AI describes it, but never diagnoses. | P0 / P1 |
+| 3. Hold the conversation | Portal chat (P0), ElevenLabs voice through the same backend tools (P1), cross-channel continuity (P1). Partner side: partner dashboard (P0). | P0 / P1 |
+| 4. Close the loop | Appointment, completion report and invoice are linked to the case and unit. Tenant and manager are updated at every transition. P2: invoices above a cost threshold require manager approval before they are accepted. | P0 / P2 |
+
+Trigger event, in the same shape as the brief's example payload:
+
+```json
+{
+  "event": "maintenance.case_created",
+  "occurred_at": "2026-11-20T18:02:00Z",
+  "unit_id": "unit_4b",
+  "contact_id": "c_202",
+  "data": { "case_id": "case_001", "issue_type": "heating_repair", "channel": "portal_chat" }
+}
+```
 
 ### User stories
 
@@ -396,7 +420,9 @@ Keep all sensitive tokens in n8n credentials/environment secrets. Avoid hard-cod
 - [ ] Context-aware previous-repair reference with source attribution.
 - [ ] Cross-channel continuity: voice conversation continues in portal.
 - [ ] One failure branch: partner rejects or has no available slots, then graceful escalation.
-- [ ] Demonstrate second simulated repair provider using the same connector contract.
+- [ ] Demonstrate second simulated repair provider using the same connector contract. Adding it should require only a provider registration (capabilities, region, endpoint) and an adapter, with no change to case-domain code. Show this in the video.
+- [ ] Building-wide outage detection: deterministic rule (≥2 units, same property, `heating_repair`, within 24 h) links cases to one partner job and notifies all affected tenants.
+- [ ] Access details and photos in the partner job (caretaker/key-safe info from seed data; optional photo upload).
 
 ### P2 — explicitly optional
 
@@ -428,17 +454,32 @@ All three contributors review shared contract changes. Owner A can build against
 5. Rebase or merge `main` frequently during the event; resolve schema conflicts together rather than creating compatibility shims.
 6. Tag a known-good demo commit before adding P1 features.
 
-### Suggested relative schedule (fit to event clock)
+### Schedule to the deadline (Friday 15:30 → Saturday 10:30)
 
-| Phase | Focus | Exit criterion |
-|---|---|---|
-| **0. Decide (first ~1 hour)** | Freeze use case, API contract, team owners, demo path | Everyone works against agreed schemas |
-| **1. Core build (~4–5 hours)** | DB, APIs, three UI skeletons, mock partner | Can create/retrieve a case and accept a partner job |
-| **2. Integration (~3–4 hours)** | n8n event routing, appointments, callbacks, invoice | Complete typed flow from resident to resolved case |
-| **3. Differentiation (~2–3 hours)** | ElevenLabs, history-aware prompt, consent polish | Voice works or safe fallback; clear partner context |
-| **4. Hardening and pitch (remaining time)** | Failure testing, connector doc, demo rehearsal, recording | Repeatable demo without manual DB changes |
+The team works through the night with staggered naps. Owners follow the table above: **A** = Product/Frontend, **B** = Backend/Domain, **C** = AI/Integrations.
 
-Do not treat these phase estimates as fixed promises. Reserve a substantial buffer for external integration problems and submission requirements.
+| Time | A — Frontend | B — Backend | C — AI / Integrations | Exit check |
+|---|---|---|---|---|
+| Fri 15:30–16:00 | Freeze contracts together: case, unit context, connector job, partner callback; commit shared example JSON | (together) | (together) | Everyone builds against the same fixtures |
+| 16:00–18:00 | Tenant portal and partner dashboard skeletons on fixtures | Schema, seed data, case API, event timeline, state-machine tests | Mock partner API. **Risk checks:** ElevenLabs agent calls a backend tool through a public tunnel URL; n8n reaches the backend | **18:00:** case persists across restart; voice go/no-go decided |
+| 18:00–19:00 | Sharing-approval screen | Sharing approval, connector `POST /jobs`, idempotency | n8n Workflow 1 (case submitted) | **Team milestone:** partner receives exactly one job |
+| 19:00–19:45 | Dinner | | | |
+| 19:45–23:30 | Slot selection, manager/unit view | Slots, booking, callbacks, invoice document, signature check | LLM extraction with deterministic fallback; n8n Workflow 2 (partner responds) | |
+| **23:30–00:00** | **Checkpoint: full typed flow end to end. Tag `demo-p0`.** If not working, cut P1 and fix. | | | |
+| 00:00–03:00 | Timeline polish, failure-state UI | Failure branch, building-wide detection rule | ElevenLabs voice on the same backend tools | Naps: A 01:00–02:15, C 02:15–03:30 |
+| 03:00–06:00 | UX polish, realistic demo data | Second provider through the connector, tests | `connector-spec.md`, `assumptions.md`, pitch script | Nap: B 03:30–04:45 |
+| **Sat 06:00** | **Feature freeze. Tag `demo-final`. Bug fixes only after this point.** | | | |
+| 06:00–08:00 | Record demo footage and voiceover | | | |
+| 08:00–09:30 | Edit the 3-minute video; README startup commands; confirm the pushed code equals `demo-final` | | | |
+| **09:30–10:00** | **Submit on BuilderBase.** 10:00–10:30 is buffer only. | | | |
+
+### 3-minute video outline
+
+1. **0:00–0:15** Problem: a broken heater takes a dozen calls and emails.
+2. **0:15–1:45** The flow: report (voice or chat) → context pre-filled → approval → partner receives job → slot booked → completion and invoice → unit view and timeline.
+3. **1:45–2:15** One differentiator that is stable at freeze: building-wide detection or the failure/escalation branch.
+4. **2:15–2:40** Connector spec, and the second provider plugged in without changing case logic.
+5. **2:40–3:00** Why heating repair, measurable value, what is simulated.
 
 ### Suggested repo layout
 
@@ -517,7 +558,7 @@ reltix-hackathon/
 - [ ] Exported n8n workflows with safe configuration instructions.
 - [ ] `Docs/connector-spec.md` with endpoints, schemas, auth, retries, events and errors.
 - [ ] `Docs/assumptions.md` explaining synthetic data and simulated endpoints.
-- [ ] Short demo script / screen recording as required by event submission rules.
+- [ ] BuilderBase hand-in: project name, code (same version as in the demo, tagged `demo-final`) and a 3-minute pitch video. Submit by 10:00; hard deadline 10:30 (GMT+1).
 - [ ] A small test suite or test evidence for the happy path and major edge cases.
 - [ ] Pitch covering problem, why heating repairs, approach, architecture, UX and measurable value.
 
@@ -529,13 +570,14 @@ reltix-hackathon/
 4. **Differentiation:** Context-aware, minimal effort, closed-loop orchestration and provider-neutral connectors.
 5. **Feasibility:** Clear demo assumptions, consent/approval, auditable statuses and next integration steps.
 
-### Next 15 minutes — concrete actions
+### Next steps (as of Friday 15:30)
 
-1. Agree on **broken heater → repair partner** as the only required service flow.
-2. Freeze `/api/cases`, `/api/units/{unit_id}/context`, partner `POST /jobs`, and the callback contract.
-3. Confirm the three-owner split above and create shared example JSON payloads that frontend, backend and integrations all use.
-4. Seed one tenant/unit, one historical heating case and one contractor.
-5. Implement the first vertical slice: **create persistent case → mock partner receives job**.
+1. Agree on **broken heater → repair partner** as the only required service flow, and pick the project name (required for submission).
+2. Freeze `/api/cases`, `/api/units/{unit_id}/context`, partner `POST /jobs`, and the callback contract; commit shared example JSON.
+3. Collect API access: OpenAI key (BuilderBase → Resources → Reveal), ElevenLabs key (via Discord), n8n link (file in BuilderBase Resources). Document variable names in `.env.example`; never commit values.
+4. Before 18:00, test the two network risks: ElevenLabs tool call and n8n webhook each reaching the backend through a public HTTPS tunnel.
+5. Seed one tenant/unit, one historical heating case, access details and one contractor.
+6. Implement the first vertical slice: **create persistent case → mock partner receives job**.
 
 ---
 
