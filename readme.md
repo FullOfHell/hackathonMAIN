@@ -105,4 +105,4 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The tenant portal can send an approved report to the simulated HeatFix inbox and show the case timeline. The tested backend flow reaches `SCHEDULED` when the reporting resident selects an offered slot and HeatFix confirms the booking. A rejected job reaches `DECLINED`. Portal slot selection, completion records and invoices are subsequent milestones.
+The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline. The next milestone is repair completion and invoices.

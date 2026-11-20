@@ -133,3 +133,5 @@ export interface PartnerInboxJob {
   received_at: string
   payload: PartnerJob
 }
+
+export type PartnerAction = 'accept' | 'reject' | 'offer-slots'

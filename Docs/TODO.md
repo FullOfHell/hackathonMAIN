@@ -65,17 +65,18 @@ Do not begin P1 work until this milestone is reliable.
 ## P0 - Complete the repair loop
 
 - [x] Add backend endpoints for partner acceptance, rejection and slot offers.
-- [ ] Add accept, reject and offer-slot controls to the HeatFix inbox.
-- [ ] Display slots in the tenant portal.
+- [x] Add accept, reject and offer-slot controls to the HeatFix inbox.
+- [x] Display slots in the tenant portal.
 - [x] Validate resident identity and slot selection in the booking API.
-- [ ] Add a resident confirmation step and show the booked appointment returned by the API.
+- [x] Add a resident confirmation step and show the booked appointment returned by the API.
 - [x] Persist the selected appointment.
 - [ ] Let the partner mark work in progress and completed.
 - [ ] Attach a synthetic repair report and invoice.
 - [ ] Link the appointment, completion and invoice to the original case and unit.
-- [ ] Build the property-manager/unit view.
+- [x] Build the property-manager unit view with cases, sharing approvals and confirmed appointments.
 - [x] Display the persisted timeline after the initial partner handoff.
-- [ ] Refresh the resident timeline as the case progresses and show it in the manager view.
+- [x] Refresh the resident timeline through booking and show it in the manager view.
+- [ ] Show the repair outcome and linked invoice on the resident and manager views.
 - [ ] Drive all visible progress from backend state, not UI-only state.
 
 ## P0 - AI intake
@@ -108,6 +109,7 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test approval records and shared fields.
 - [x] Test duplicate partner-job submission.
 - [x] Test slot selection and appointment persistence.
+- [x] Rehearse booking, confirmation retry and partner rejection in the browser.
 - [x] Test valid and invalid state transitions.
 - [x] Test duplicate and invalid partner callbacks.
 - [ ] Test repair completion and invoice linking.
@@ -119,11 +121,9 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - Product / Frontend remaining work
 
-1. **Booking loop.** Add HeatFix accept, reject and offer-slot controls. Refresh the resident's case so offered slots appear, require explicit confirmation, and show the appointment only after FastAPI confirms it. Show declines, unavailable providers and retryable failures clearly.
-2. **Manager / unit view.** Show cases for the unit, who received the job, what was approved for sharing, the appointment and the backend event timeline. The unit case and event APIs already exist.
-3. **Repair completion and invoice.** Coordinate the contract with B, then wire the partner's start/complete actions and invoice attachment. Show the result on the resident and manager views once the APIs are ready.
-4. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
-5. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
+1. **Repair completion and invoice.** Coordinate the contract with B, then wire the partner's start/complete actions and invoice attachment. Show the result on the resident and manager views once the APIs are ready.
+2. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
+3. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 
 ## P1 - Differentiators
 
@@ -162,6 +162,6 @@ Implement in this order after P0 is stable:
 
 ## Next team handoffs
 
-- **A - Frontend:** connect the inbox and tenant portal to the booking endpoints, then add the manager/unit view.
+- **A - Frontend:** extend the existing partner, resident and manager views with repair outcomes and invoices once the API is ready.
 - **B - Backend:** define and implement repair completion and invoice persistence.
 - **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.
