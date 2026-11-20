@@ -1,0 +1,9 @@
+{
+  "unit_id": "unit_4b",
+  "resident_id": "c_202",
+  "issue_type": "heating_repair",
+  "description": "No heat since last night, radiators are cold.",
+  "symptoms": ["radiators_cold"],
+  "urgency": "high",
+  "source_channel": "portal_chat"
+}

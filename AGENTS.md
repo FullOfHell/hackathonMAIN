@@ -8,6 +8,12 @@ Build one reliable demo for the Reltix track: a resident reports broken heating,
 
 The official requirements are in `Docs/Reltix-Track-Description.pdf`. The implementation plan is in `Docs/Reltix_Hackathon_Project_Plan.md`. If requirements conflict, the official PDF wins.
 
+## Deadlines
+
+- Submission: Saturday 21 November, 10:30 (GMT+1) on BuilderBase: project name, code identical to the demo version, 3-minute pitch video.
+- P0 checkpoint: Friday 23:30–00:00, tag `demo-p0`.
+- Feature freeze: Saturday 06:00, tag `demo-final`. After the freeze, only bug fixes.
+
 ## Non-negotiable product decisions
 
 - One P0 service: heating repair.

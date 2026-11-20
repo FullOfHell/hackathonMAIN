@@ -1,0 +1,5 @@
+{
+  "approved_fields": ["name", "contact", "address", "unit", "heating_type", "access_details", "issue"],
+  "channel": "portal_chat",
+  "approved_by": "c_202"
+}
