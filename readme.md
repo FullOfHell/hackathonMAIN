@@ -91,7 +91,7 @@ python -m uvicorn app.main:app --reload --port 8000
 
 Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLite databases in `backend/data/app.db` and upgrades existing cases in place. Defaults run both the centrix stand-in and simulated HeatFix on port 8000. For other addresses or a custom shared secret, set `PUBLIC_BACKEND_URL`, `PARTNER_BASE_URL` and `PARTNER_WEBHOOK_SECRET` in the environment or in `backend/.env`. See the [environment template](.env.example).
 
-For ElevenLabs and n8n (cloud services), expose the backend with `cloudflared tunnel --url http://localhost:8000` and put the HTTPS URL in `PUBLIC_BACKEND_URL`.
+For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI. If ElevenLabs needs to reach the backend, configure its reachable HTTPS origin in `PUBLIC_BACKEND_URL`.
 
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
