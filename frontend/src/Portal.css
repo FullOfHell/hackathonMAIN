@@ -67,3 +67,40 @@ input { accent-color: #942f1d; }
   .report-layout { grid-template-columns: 1fr; }
   nav, .nav-links { flex-wrap: wrap; gap: .7rem; }
 }
+
+.repair-notifications { position: relative; margin-left: .25rem; flex: none; }
+.masthead .nav-links { margin-left: auto; justify-content: flex-end; }
+.notification-bell {
+  position: relative; display: grid; place-items: center; width: 2.65rem; height: 2.65rem;
+  padding: 0; color: inherit; background: #fff8ef1a; border-color: #fff8ef70;
+}
+.notification-bell:hover, .notification-bell[aria-expanded="true"] { background: #fff8ef36; }
+.notification-count {
+  position: absolute; top: -.35rem; right: -.4rem; min-width: 1.25rem;
+  padding: .05rem .24rem; border: 2px solid #9b4122; border-radius: 1rem;
+  color: #522614; background: #ffcd7d; font-size: .7rem; line-height: 1.1;
+}
+.notification-panel {
+  position: absolute; z-index: 2; top: calc(100% + .65rem); right: 0;
+  width: min(24rem, calc(100vw - 2rem)); background: #fffcf8; color: #30231e;
+  border: 1px solid #ecdcd0; border-radius: .9rem; box-shadow: 0 12px 28px #43241935;
+}
+.notification-panel :focus-visible { outline-color: #704426; outline-offset: -3px; }
+.notification-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 1rem; }
+.notification-heading h2 { font-size: 1.2rem; margin: 0; }
+.notification-mark-read { padding: .25rem; background: transparent; color: #752d1d; text-decoration: underline; font-size: .85rem; }
+.notification-info { padding: .85rem 1rem; margin: 0; border-top: 1px solid #ecdcd0; }
+.notification-list { list-style: none; padding: 0; margin: 0; max-height: min(24rem, 55vh); overflow: auto; }
+.notification-list li { border-top: 1px solid #ecdcd0; }
+.notification-item { display: grid; gap: .15rem; padding: .75rem 1rem; }
+.notification-item[data-unread="true"] { background: #faeadc; }
+.notification-item:hover { background: #f5e3d3; }
+.notification-item span, .notification-item small { font-size: .85rem; }
+.notification-unread { color: #752d1d; }
+.notification-item small { color: #6c554a; }
+
+@media (max-width: 680px) {
+  .masthead nav { display: grid; grid-template-columns: 1fr auto; }
+  .masthead .nav-links { grid-column: 1 / -1; grid-row: 2; margin-left: 0; justify-content: flex-start; }
+  .repair-notifications { grid-column: 2; grid-row: 1; }
+}

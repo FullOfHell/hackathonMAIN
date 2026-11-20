@@ -17,7 +17,7 @@ export function statusLabel(status: string) {
 }
 
 export function caseStatusLabel(status: string) {
-  if (status === 'DECLINED' || status === 'rejected') return 'Declined by HeatFix'
+  if (status === 'DECLINED' || status === 'rejected') return 'Declined by contractor'
   const label = statusLabel(status.replace(/[.]/g, '_'))
   return label.charAt(0).toUpperCase() + label.slice(1)
 }

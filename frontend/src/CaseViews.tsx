@@ -7,8 +7,8 @@ import type { CaseEvent, MaintenanceCase } from './types/domain'
 const eventLabels: Record<string, string> = {
   'maintenance.case_created': 'Report saved',
   'sharing.approved': 'Sharing approved',
-  'partner.job_requested': 'Job received by HeatFix',
-  'partner.accepted': 'Job accepted by HeatFix',
+  'partner.job_requested': 'Job received by contractor',
+  'partner.accepted': 'Job accepted by contractor',
   'partner.booking_unconfirmed': 'Booking confirmation pending',
   'seed.historical_case': 'Historical repair case',
 }
@@ -47,7 +47,7 @@ export function RepairOutcome({ item }: { item: MaintenanceCase }) {
   return (
     <section className="repair-outcome" aria-label="Repair outcome">
       <h3>Repair outcome</h3>
-      {item.status === 'IN_PROGRESS' && <p role="status">HeatFix has started the repair.</p>}
+      {item.status === 'IN_PROGRESS' && <p role="status">Your contractor has started the repair.</p>}
       {report && <><strong>Repair summary</strong><p className="issue-copy">{report.summary}</p></>}
       {invoice && fileUrl ? <div>
         <p><strong>Invoice {invoice.invoice_number}</strong> · {new Intl.NumberFormat('en-IE', {
@@ -136,10 +136,10 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
         </fieldset>
         {bookingError && <p className="error" role="alert">{bookingError}</p>}
         <button disabled={!slot || booking || refreshing}>{booking ? 'Confirming…' : bookingError ? 'Retry confirmation' : 'Confirm appointment'}</button>
-      </form> : current.status === 'DECLINED' ? <p role="status"><strong>Declined by HeatFix</strong>. No appointment was booked.</p>
+      </form> : current.status === 'DECLINED' ? <p role="status"><strong>Declined by contractor</strong>. No appointment was booked.</p>
         : current.status === 'NEEDS_HUMAN_REVIEW' || current.status === 'FAILED' || current.status === 'CANCELLED'
           ? <p role="status">{caseStatusLabel(current.status)}. No appointment was confirmed.</p>
-          : <p role="status">Waiting for HeatFix to offer appointment times.</p>}
+          : <p role="status">Waiting for your contractor to offer appointment times.</p>}
       <RepairOutcome item={current} />
       <CaseTimeline caseId={caseId} revision={timelineRevision} />
     </section>
