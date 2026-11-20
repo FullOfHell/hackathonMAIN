@@ -76,8 +76,9 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Build the property-manager unit view with cases, sharing approvals and confirmed appointments.
 - [x] Display the persisted timeline after the initial partner handoff.
 - [x] Refresh the resident timeline through booking and show it in the manager view.
-- [ ] Show the repair outcome and linked invoice on the resident and manager views.
-- [ ] Drive all visible progress from backend state, not UI-only state.
+- [x] Wire repair start, completion and synthetic invoice submission into the HeatFix inbox.
+- [x] Show the repair outcome and linked invoice in resident and manager views.
+- [x] Drive live case progress from backend responses and the persisted timeline.
 
 ## P0 - AI intake
 
@@ -114,16 +115,16 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Test duplicate and invalid partner callbacks.
 - [x] Test repair completion and invoice linking across retries and restart.
 - [x] Test unavailable-provider escalation.
-- [ ] Rehearse the entire typed workflow repeatedly.
+- [x] Verify the typed report-to-invoice flow in the browser against local FastAPI and offline fixtures.
+- [ ] Rehearse the full typed demo with live n8n enabled.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
 
 ## P0 - Product / Frontend remaining work
 
-1. **Repair completion and invoice.** Wire HeatFix start, complete and invoice actions to the [connector API](connector-spec.md). Show the returned documents on the resident and manager views.
-2. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
-3. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
+1. **Intake handoff.** Connect structured extraction when C publishes the API. Typed intake already works with an optional hot-water follow-up.
+2. **Demo and QA.** Rehearse from a fresh seed with live n8n enabled. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 
 ## P1 - Differentiators
 
@@ -162,6 +163,6 @@ Implement in this order after P0 is stable:
 
 ## Next team handoffs
 
-- **A - Frontend:** extend the existing partner, resident and manager views with repair completion and invoices.
+- **A - Frontend:** connect structured extraction when ready and rehearse the full browser flow.
 - **B - Backend:** the P0 case, booking, repair, invoice and failure APIs are ready for A and C. The [closed-case fixture](../shared/fixtures/case-closed.json) matches the unit history response for a completed and invoiced case.
 - **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.

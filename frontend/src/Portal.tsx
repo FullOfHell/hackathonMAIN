@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
-import { CaseProgress, CaseTimeline } from './CaseViews'
+import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { formatTime, slotLabel, statusLabel } from './caseDisplay'
-import type { MaintenanceCase, PartnerAction, PartnerInboxJob, UnitContext } from './types/domain'
+import type { MaintenanceCase, PartnerAction, PartnerCommand, PartnerInboxJob, RepairInvoiceInput, UnitContext } from './types/domain'
 import './Portal.css'
 
 const shortcuts = ['No heat at all', 'Radiators are lukewarm', 'Some radiators are cold']
@@ -26,11 +26,14 @@ function useLoad<T>(load: () => Promise<T>) {
 const unitId = 'unit_4b'
 const loadHome = () => api.getUnitContext(unitId)
 const loadUnitCases = () => api.listUnitCases(unitId)
-const views = { '#report': 'Report broken heating', '#inbox': 'HeatFix Aachen inbox', '#manager': 'Property manager' }
+const views = {
+  '#report': 'Report broken heating', '#cases': 'My cases',
+  '#inbox': 'HeatFix Aachen inbox', '#manager': 'Property manager',
+}
 
 function currentView(): keyof typeof views {
   const hash = location.hash
-  return hash === '#inbox' || hash === '#manager' ? hash : '#report'
+  return hash === '#cases' || hash === '#inbox' || hash === '#manager' ? hash : '#report'
 }
 
 function App() {
@@ -48,6 +51,7 @@ function App() {
             <a className="brand" href="#report">centrix</a>
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
+              <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
               <a href="#inbox" aria-current={view === '#inbox' ? 'page' : undefined}>HeatFix inbox</a>
               <a href="#manager" aria-current={view === '#manager' ? 'page' : undefined}>Manager</a>
             </div>
@@ -57,6 +61,7 @@ function App() {
       </header>
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
+        {view === '#cases' && <ResidentCases />}
         {view === '#inbox' && <Inbox />}
         {view === '#manager' && <Manager />}
       </main>
@@ -110,10 +115,11 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const fields = current ? sharingFields(home, current) : []
   const request = current?.sharing_request
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
+  const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
 
   function review(event: FormEvent) {
     event.preventDefault()
-    const note = hotWater === 'yes' ? '\nHot water is also affected.'
+    const note = hotWaterReported ? '' : hotWater === 'yes' ? '\nHot water is also affected.'
       : hotWater === 'no' ? '\nHot water still works.' : ''
     setSummary(issue.trim() + note)
     setStep(1)
@@ -185,14 +191,14 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
               onClick={() => setIssue((value) => value.trim() ? value.trim() + '\n' + text : text)}
               disabled={issue.trim().length + text.length + 1 > 1950}>{text}</button>)}
           </div>
-          <fieldset>
+          {!hotWaterReported && <fieldset>
             <legend>Is hot water also affected? <span className="muted">(optional)</span></legend>
             <div className="radio-group">
               {[['yes', 'Yes'], ['no', 'No'], ['', 'Not sure']].map(([value, label]) =>
                 <label key={label}><input type="radio" name="hot-water" value={value}
                   checked={hotWater === value} onChange={() => setHotWater(value)} /> {label}</label>)}
             </div>
-          </fieldset>
+          </fieldset>}
           <button disabled={issue.trim().length < 3}>Review summary</button>
         </form>}
         {step === 1 && <form onSubmit={save}>
@@ -276,39 +282,62 @@ function Inbox() {
   )
 }
 
-const labels: Record<PartnerAction, string> = { accept: 'Accept', reject: 'Reject', 'offer-slots': 'Offer slots' }
+const labels: Record<PartnerAction, string> = {
+  accept: 'Accept', reject: 'Reject', 'offer-slots': 'Offer slots',
+  start: 'Start repair', complete: 'Complete repair', invoice: 'Submit demo invoice',
+}
 const availableActions: Record<string, PartnerAction[]> = {
   received: ['accept', 'reject'], accepted: ['offer-slots', 'reject', 'accept'],
-  slots_offered: ['offer-slots'], rejected: ['reject'],
+  slots_offered: ['offer-slots'], rejected: ['reject'], scheduled: ['start'], in_progress: ['complete', 'start'],
+  completed: ['invoice'],
 }
 const statusForAction: Record<PartnerAction, string> = {
-  accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered',
+  accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered', start: 'in_progress',
+  complete: 'completed', invoice: 'invoice_ready',
+}
+const repeatLabels: Partial<Record<PartnerAction, string>> = {
+  accept: 'Check acceptance', reject: 'Check rejection', 'offer-slots': 'Check slot delivery', start: 'Check repair start',
+}
+
+function syntheticInvoice(jobId: string): RepairInvoiceInput {
+  return { invoice_number: 'HF-DEMO-' + jobId, description: 'Heating repair and labour', amount_cents: 12500, currency: 'EUR' }
 }
 
 function JobCard({ job: initial }: { job: PartnerInboxJob }) {
   const [job, setJob] = useState(initial)
   const [pending, setPending] = useState<PartnerAction | null>(null)
-  const [retry, setRetry] = useState<PartnerAction | null>(null)
+  const [retry, setRetry] = useState<PartnerCommand | null>(null)
+  const [editing, setEditing] = useState<'complete' | 'invoice' | null>(null)
+  const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
-  const actions = retry ? [retry] : availableActions[job.status] ?? []
+  const actions = retry ? [retry.action] : availableActions[job.status] ?? []
+  const invoice = syntheticInvoice(job.id)
 
-  async function act(action: PartnerAction) {
+  async function act(command: PartnerCommand) {
     if (submitting.current) return
     submitting.current = true
+    const { action } = command
     setPending(action)
     setError('')
     try {
-      setJob(await api.updatePartnerJob(job.id, action))
+      setJob(await api.updatePartnerJob(job.id, command))
       setRetry(null)
+      setEditing(null)
     } catch (failure) {
-      setRetry(action)
+      setRetry(command)
       setError(failure instanceof Error ? failure.message : 'The partner action could not be confirmed.')
     } finally {
       submitting.current = false
       setPending(null)
     }
+  }
+
+  function begin(action: PartnerAction) {
+    if (retry) void act(retry)
+    else if (action === 'complete' || action === 'invoice') setEditing(action)
+    else void act({ action })
   }
 
   return (
@@ -320,14 +349,31 @@ function JobCard({ job: initial }: { job: PartnerInboxJob }) {
       {resident.name && <p>Resident · {resident.name}</p>}
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
+      {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
+      {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
+        event.preventDefault()
+        if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })
+        if (editing === 'invoice') void act({ action: 'invoice', body: invoice })
+      }}>
+        {editing === 'complete' ? <label>Repair summary
+          <textarea rows={3} maxLength={2000} required value={summary}
+            onChange={(event) => setSummary(event.target.value)} disabled={Boolean(pending)} />
+        </label> : <p>Demo invoice {invoice.invoice_number} · €125.00 · {invoice.description}</p>}
+        <div className="actions">
+          <button type="submit" disabled={Boolean(pending) || (editing === 'complete' && !summary.trim())}>
+            {pending ? 'Saving…' : editing === 'complete' ? 'Save completion' : 'Confirm demo invoice'}
+          </button>
+          <button type="button" className="secondary" disabled={Boolean(pending)} onClick={() => setEditing(null)}>Back</button>
+        </div>
+      </form>}
       {error && <p className="error" role="alert">{error}</p>}
-      {actions.length > 0 && <div className="actions" aria-label="Partner job actions">
+      {actions.length > 0 && (!editing || retry) && <div className="actions" aria-label="Partner job actions">
         {actions.map((action) => {
           const repeat = job.status === statusForAction[action]
           return <button key={action} className={action === 'reject' || repeat ? 'secondary' : undefined}
-            disabled={Boolean(pending)} onClick={() => void act(action)}>
-            {pending === action ? 'Sending…' : retry === action ? 'Retry ' + labels[action].toLowerCase()
-              : repeat ? 'Check ' + ({ accept: 'acceptance', reject: 'rejection', 'offer-slots': 'slot delivery' }[action])
+            disabled={Boolean(pending)} onClick={() => begin(action)}>
+            {pending === action ? 'Sending…' : retry?.action === action ? 'Retry ' + labels[action].toLowerCase()
+              : repeat ? repeatLabels[action] ?? labels[action]
                 : labels[action]}
           </button>
         })}
@@ -355,6 +401,40 @@ function Manager() {
   )
 }
 
+function ResidentCases() {
+  const home = useLoad(loadHome)
+  const cases = useLoad(loadUnitCases)
+  const residentId = home.data?.residents[0]?.id
+  const ownCases = cases.data?.filter((item) => item.resident_id === residentId)
+
+  return (
+    <section className="inbox" aria-label="Resident cases">
+      <div className="inbox-heading">
+        <h2>Heating cases</h2>
+        <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh cases</button>
+      </div>
+      {home.failed || cases.failed ? <p className="panel error" role="alert">Your cases could not be loaded. Try refreshing.</p>
+        : !home.data || !ownCases ? <p className="panel" role="status">Loading your cases…</p>
+          : !ownCases.length ? <p className="panel">No heating reports yet.</p>
+            : ownCases.map((item) => <ResidentCase key={item.id} item={item} />)}
+    </section>
+  )
+}
+
+function ResidentCase({ item }: { item: MaintenanceCase }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <article className="panel job">
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{statusLabel(item.status)}</span></div>
+      <p className="issue-copy">{item.description}</p>
+      <button className="secondary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        {expanded ? 'Hide case details' : 'View case details'}
+      </button>
+      {expanded && (item.partner_job_id ? <CaseProgress initial={item} active /> : <CaseTimeline caseId={item.id} />)}
+    </article>
+  )
+}
+
 function ManagerCase({ item }: { item: MaintenanceCase }) {
   const [showTimeline, setShowTimeline] = useState(false)
   const contractor = item.sharing_request?.partner.name ?? (item.partner_id === 'p_heatfix' ? 'HeatFix Aachen GmbH' : item.partner_id)
@@ -369,6 +449,7 @@ function ManagerCase({ item }: { item: MaintenanceCase }) {
           : 'No approval recorded'}</dd>
         <dt>Appointment</dt><dd>{item.appointment ? slotLabel(item.appointment) : 'No confirmed appointment'}</dd>
       </dl>
+      <RepairOutcome item={item} />
       <button className="secondary" aria-expanded={showTimeline} onClick={() => setShowTimeline(!showTimeline)}>
         {showTimeline ? 'Hide timeline' : 'Show timeline'}
       </button>
