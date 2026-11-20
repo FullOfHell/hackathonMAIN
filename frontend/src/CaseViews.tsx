@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { api } from './api/client'
+import { api, invoiceUrl } from './api/client'
 import { formatTime, slotLabel, statusLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
 
@@ -35,6 +35,27 @@ export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revisio
           {eventLabels[event.type] ?? statusLabel(String(event.payload.to ?? event.type).replace(/[.]/g, '_'))}
           <time dateTime={event.timestamp}>{formatTime(event.timestamp)}</time>
         </li>)}</ol> : <p>No case events yet.</p> : !failed && <p role="status">Loading case timeline…</p>}
+    </section>
+  )
+}
+
+export function RepairOutcome({ item }: { item: MaintenanceCase }) {
+  const { completion_report: report, invoice } = item
+  if (!report && !invoice && item.status !== 'IN_PROGRESS') return null
+  const fileUrl = invoice && (invoiceUrl(item.id)
+    || 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(invoice, null, 2)))
+  return (
+    <section className="repair-outcome" aria-label="Repair outcome">
+      <h3>Repair outcome</h3>
+      {item.status === 'IN_PROGRESS' && <p role="status">HeatFix has started the repair.</p>}
+      {report && <><strong>Repair summary</strong><p className="issue-copy">{report.summary}</p></>}
+      {invoice && fileUrl ? <div>
+        <p><strong>Invoice {invoice.invoice_number}</strong> · {new Intl.NumberFormat('en-IE', {
+          style: 'currency', currency: invoice.currency,
+        }).format(invoice.amount_cents / 100)}</p>
+        <p>{invoice.description}</p>
+        <a className="button secondary" href={fileUrl} download={invoice.filename}>Download synthetic invoice</a>
+      </div> : report && <p className="muted" role="status">Invoice pending</p>}
     </section>
   )
 }
@@ -108,6 +129,7 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
         : current.status === 'NEEDS_HUMAN_REVIEW' || current.status === 'FAILED' || current.status === 'CANCELLED'
           ? <p role="status">Case status: {statusLabel(current.status)}. No appointment was confirmed.</p>
           : <p role="status">Waiting for HeatFix to offer appointment times.</p>}
+      <RepairOutcome item={current} />
       <CaseTimeline caseId={caseId} revision={refresh * 2 + Number(active)} />
     </section>
   )

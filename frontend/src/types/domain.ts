@@ -88,6 +88,17 @@ export interface AppointmentSlot {
   end: string
 }
 
+export interface RepairReport {
+  summary: string
+}
+
+export interface RepairInvoiceInput {
+  invoice_number: string
+  description: string
+  amount_cents: number
+  currency: 'EUR'
+}
+
 interface CaseDocument {
   case_id: string
   unit_id: string
@@ -96,17 +107,12 @@ interface CaseDocument {
   url: string
 }
 
-export interface CompletionReport extends CaseDocument {
+export interface CompletionReport extends CaseDocument, RepairReport {
   kind: 'completion_report'
-  summary: string
 }
 
-export interface RepairInvoice extends CaseDocument {
+export interface RepairInvoice extends CaseDocument, RepairInvoiceInput {
   kind: 'invoice'
-  invoice_number: string
-  description: string
-  amount_cents: number
-  currency: 'EUR'
 }
 
 export interface MaintenanceCase extends CreateCaseRequest {
@@ -157,4 +163,9 @@ export interface PartnerInboxJob {
   payload: PartnerJob
 }
 
-export type PartnerAction = 'accept' | 'reject' | 'offer-slots'
+export type PartnerAction = 'accept' | 'reject' | 'offer-slots' | 'start' | 'complete' | 'invoice'
+
+export type PartnerCommand =
+  | { action: Exclude<PartnerAction, 'complete' | 'invoice'>; body?: never }
+  | { action: 'complete'; body: RepairReport }
+  | { action: 'invoice'; body: RepairInvoiceInput }

@@ -105,6 +105,11 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-The browser flow runs from report through appointment confirmation. In **HeatFix inbox**, accept the job and offer slots. Return to **Report**, choose a time, and confirm it. Open **Manager** to see the appointment, approved sharing fields and persisted timeline.
+The browser flow runs from a typed report to a closed case with a synthetic invoice.
 
-The backend supports repair start, completion, and invoice attachment through `CLOSED`. The unit history returns the appointment and both downloadable documents. There is also an API to escalate declined, failed or unmatched cases for human review. The remaining browser work is to wire the repair actions and display the documents. See the [connector specification](Docs/connector-spec.md).
+1. In **Report**, describe the issue, review the summary, and approve the sharing request.
+2. In **HeatFix inbox**, accept the job and offer slots. Return to **Report** to confirm an offered time.
+3. In **HeatFix inbox**, select **Start repair**, then **Complete repair** and save a short summary.
+4. Submit the demo invoice. Open **My cases** or **Manager** to read the outcome and download the invoice JSON.
+
+See the [connector specification](Docs/connector-spec.md) for the API. Typed intake works independently of structured extraction.
