@@ -60,6 +60,23 @@ npm run build
 
 Shared frontend, backend and integration fixtures are stored in `shared/fixtures/`. Treat their shape as a team contract.
 
+## Run the backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp ../.env.example .env                             # then fill in keys
+python -m pytest -q                                 # vertical-slice tests
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+API docs: http://localhost:8000/docs. The SQLite database is created and seeded on first start (`backend/data/app.db`, git-ignored); delete it to reset the demo.
+
+For ElevenLabs and n8n (cloud services), expose the backend with `cloudflared tunnel --url http://localhost:8000` and put the HTTPS URL in `PUBLIC_BACKEND_URL`.
+
+Backend tests consume the canonical contract examples from `shared/fixtures/`.
+
 ## Three-person workflow
 
 - Create short-lived branches such as `frontend/tenant-flow`, `backend/case-api`, or `integration/partner-connector`.
@@ -70,4 +87,4 @@ Shared frontend, backend and integration fixtures are stored in `shared/fixtures
 
 ## Current status
 
-Planning and repository setup. The next milestone is a persistent case that can be created from the resident flow and received exactly once by the mock partner.
+Backend vertical slice works and is tested: resident submits issue → persistent case → sharing approval recorded → mock partner receives exactly one job (idempotent). Next: slots, booking, partner callbacks (Workflow 2), invoice, and the three UIs.

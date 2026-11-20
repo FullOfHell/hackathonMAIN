@@ -14,36 +14,38 @@ export type CaseStatus =
   | 'NEEDS_HUMAN_REVIEW'
   | 'FAILED'
 
-export interface PropertyContext {
+export type Channel = 'portal_chat' | 'voice' | 'email' | 'manager'
+export type Urgency = 'low' | 'normal' | 'high'
+
+export interface Resident {
   id: string
-  address: string
-  building_year: number
-  heating_type: string
+  unit_id: string
+  name: string
+  email: string
+  phone: string
+  preferred_contact: string
+  move_in: string
 }
 
 export interface UnitContext {
   unit_id: string
-  property: PropertyContext
-  unit: { label: string; floor: number; size_sqm: number; rooms: number }
-  resident: {
+  property: {
     id: string
-    name: string
-    email: string
-    phone: string
-    preferred_contact: string
+    address: string
+    building_year: number
+    heating: string
+    region: string
+    access_details: string
   }
-  previous_cases: Array<{
+  unit: { label: string; floor: number; size_sqm: number }
+  residents: Resident[]
+  prior_heating_cases: Array<{
     id: string
     issue_type: string
-    summary: string
+    description: string
     status: CaseStatus
-    closed_at: string
+    created_at: string
   }>
-  access: {
-    caretaker_available: boolean
-    key_safe_available: boolean
-    key_safe_code_shared: boolean
-  }
 }
 
 export interface CreateCaseRequest {
@@ -52,29 +54,51 @@ export interface CreateCaseRequest {
   issue_type: 'heating_repair'
   description: string
   symptoms: string[]
-  urgency: 'low' | 'normal' | 'high' | 'emergency'
-  availability_preferences: string[]
-  source_channel: 'portal_chat' | 'voice'
+  urgency: Urgency
+  source_channel: Channel
 }
 
-export interface CaseEvent {
-  id: string
-  type: string
-  actor: string
-  occurred_at: string
+export interface SharingApprovalRequest {
+  approved_fields: string[]
+  channel: Channel
+  approved_by: string
+}
+
+export interface SharingApproval {
+  id: number
+  case_id: string
+  partner_id: string
+  shared_fields: string[]
+  channel: Channel
+  approved_by: string
+  recorded_at: string
+}
+
+export interface SharingRequest {
+  partner: { id: string; name: string }
+  proposed_fields: string[]
+  required_fields: string[]
+  shareable_fields: string[]
 }
 
 export interface MaintenanceCase extends CreateCaseRequest {
   id: string
   status: CaseStatus
+  partner_id: string | null
+  partner_job_id: string | null
   created_at: string
-  events: CaseEvent[]
+  updated_at: string
+  sharing_approval: SharingApproval | null
+  sharing_request?: SharingRequest
 }
 
-export interface SharingApprovalRequest {
-  approved_fields: string[]
-  channel: 'portal' | 'voice'
-  approved_by: string
+export interface CaseEvent {
+  id: number
+  case_id: string
+  type: string
+  actor: string
+  timestamp: string
+  payload: Record<string, unknown>
 }
 
 export interface PartnerJob {
@@ -82,9 +106,12 @@ export interface PartnerJob {
   request_id: string
   idempotency_key: string
   service_type: 'heating_repair'
-  property: { address: string; unit: string; heating_type: string }
-  issue: { description: string; symptoms: string[]; priority: string }
-  resident: { name: string; contact: string }
-  sharing: { approved_fields: string[]; approved_at: string; channel: string }
+  property: Record<string, string>
+  issue: { description: string; symptoms: string[]; priority: Urgency }
+  resident: {
+    name?: string
+    contact?: { email: string; phone: string }
+  }
+  sharing: { approved_fields: string[]; approved_at: string }
   callback_url: string
 }

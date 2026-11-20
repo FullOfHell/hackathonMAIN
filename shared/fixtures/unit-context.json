@@ -1,36 +1,36 @@
 {
   "unit_id": "unit_4b",
   "property": {
-    "id": "property_aachen_12",
-    "address": "Musterstrasse 12, 52062 Aachen",
+    "id": "prop_musterstr_12",
+    "address": "Musterstraße 12, 52062 Aachen",
     "building_year": 1972,
-    "heating_type": "gas central heating"
+    "heating": "gas central heating",
+    "region": "Aachen",
+    "access_details": "Caretaker Jonas Weber (+49 241 00000000) can open the boiler room; key safe at side entrance, code released by the property manager after booking."
   },
   "unit": {
     "label": "4B",
     "floor": 2,
-    "size_sqm": 68,
-    "rooms": 3
+    "size_sqm": 68
   },
-  "resident": {
-    "id": "resident_lena",
-    "name": "Lena Hoffmann",
-    "email": "lena@example.com",
-    "phone": "+49 151 00000000",
-    "preferred_contact": "portal"
-  },
-  "previous_cases": [
+  "residents": [
     {
-      "id": "case_previous_heating",
-      "issue_type": "heating_repair",
-      "summary": "Low boiler pressure reported and resolved",
-      "status": "CLOSED",
-      "closed_at": "2026-11-06T10:30:00Z"
+      "id": "c_202",
+      "unit_id": "unit_4b",
+      "name": "Lena Hoffmann",
+      "email": "lena@example.com",
+      "phone": "+49 151 00000000",
+      "preferred_contact": "portal",
+      "move_in": "2025-03-01"
     }
   ],
-  "access": {
-    "caretaker_available": true,
-    "key_safe_available": true,
-    "key_safe_code_shared": false
-  }
+  "prior_heating_cases": [
+    {
+      "id": "case_000",
+      "issue_type": "heating_repair",
+      "description": "Heating pressure dropped below 1 bar; pressure topped up by HeatFix.",
+      "status": "CLOSED",
+      "created_at": "2026-11-06T08:30:00Z"
+    }
+  ]
 }

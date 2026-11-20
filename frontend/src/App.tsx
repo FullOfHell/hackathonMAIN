@@ -6,8 +6,9 @@ import './App.css'
 function App() {
   const [issue, setIssue] = useState('')
   const [submittedIssue, setSubmittedIssue] = useState<string | null>(null)
-  const { property, resident, unit, previous_cases: previousCases } =
+  const { property, residents, unit, prior_heating_cases: priorCases } =
     unitContextFixture
+  const resident = residents[0]
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -49,7 +50,7 @@ function App() {
             <dl className="context-list">
               <div>
                 <dt>Resident</dt>
-                <dd>{resident.name}</dd>
+                <dd>{resident?.name}</dd>
               </div>
               <div>
                 <dt>Address</dt>
@@ -61,13 +62,13 @@ function App() {
               </div>
               <div>
                 <dt>Heating</dt>
-                <dd>{property.heating_type}</dd>
+                <dd>{property.heating}</dd>
               </div>
             </dl>
 
             <div className="history-note">
               <strong>Relevant history</strong>
-              <span>{previousCases[0]?.summary}</span>
+              <span>{priorCases[0]?.description}</span>
             </div>
           </section>
 
