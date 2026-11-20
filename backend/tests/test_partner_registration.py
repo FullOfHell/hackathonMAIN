@@ -308,3 +308,37 @@ def test_koln_has_no_contractor_until_a_delivery_provider_is_registered(client):
     assert client.post(MANAGER_CONTRACTORS, json=registered).status_code == 201
     assert client.get(url).json()["sharing_request"]["partner"]["name"] == registered["name"]
     assert create_case(client)["partner_id"] == "p_manager_cologne-heating"
+
+
+def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatch_address(client):
+    first = create_case(client)
+    contractor = {"name": "HeetsFix", "slug": "dusseldorf-heating", "region": "Dusseldorf"}
+    assert client.post(MANAGER_CONTRACTORS, json=contractor).status_code == 201
+    profile = "/api/units/unit_2a/residents/c_203/profile"
+    details = {"acting_resident_id": "c_203", "address": "Demo Street 15, 40210 Düsseldorf", "unit": "2A rear entrance"}
+    assert client.patch(profile, json=details).status_code == 200
+    report = load("case-create.json") | {
+        "unit_id": "unit_2a", "resident_id": "c_203", "description": "Some radiators are lukewarm.",
+    }
+    routed = client.post("/api/cases", json=report)
+    assert routed.status_code == 201, routed.text
+    second = routed.json()
+    approval = {"approved_by": "c_203", "approved_fields": CONSENT["approved_fields"],
+                "expected_partner_id": "p_manager_dusseldorf-heating"}
+    assert client.post(f"/api/cases/{second['id']}/sharing-approval", json=approval).status_code == 200
+
+    uncovered = "Demo Street 16, 10115 Berlin"
+    assert client.patch(profile, json=details | {"address": uncovered}).status_code == 200
+    third = client.post("/api/cases", json=report).json()
+    result = client.get("/api/manager/repairs")
+    assert result.status_code == 200, result.text
+    heatfix, heetsfix, unassigned = result.json()
+    assert heatfix["contractor"] == {"id": "p_heatfix", "name": "HeatFix Aachen GmbH"}
+    assert {repair["case"]["id"] for repair in heatfix["repairs"]} == {first["id"], "case_000"}
+    assert heetsfix["contractor"] == {"id": "p_manager_dusseldorf-heating", "name": "HeetsFix"}
+    assigned, = heetsfix["repairs"]
+    assert (assigned["case"]["id"], assigned["case"]["unit_id"]) == (second["id"], "unit_2a")
+    assert (assigned["address"], assigned["unit"]) == (details["address"], details["unit"])
+    assert unassigned["contractor"] is None
+    remaining, = unassigned["repairs"]
+    assert (remaining["case"]["id"], remaining["address"]) == (third["id"], uncovered)

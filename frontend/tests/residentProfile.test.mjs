@@ -69,6 +69,12 @@ test('fixture context and new consent share one resident while earlier jobs keep
     address: unitContextFixture.property.address, unit: unitContextFixture.unit.label, heating: unitContextFixture.property.heating,
   })
   assert.deepEqual(newJob.payload.property, { address: changes.address, unit: changes.unit, heating_type: changes.heating })
+  const [group] = await api.listManagerRepairs()
+  assert.equal(group.contractor.name, 'HeatFix Aachen GmbH')
+  assert.deepEqual(group.repairs.map((repair) => [repair.case.id, repair.address, repair.unit]), [
+    [next.id, changes.address, changes.unit],
+    [initial.id, originalJob.payload.property.address, originalJob.payload.property.unit],
+  ])
 })
 
 test('an intake result without extracted heating symptoms proceeds to the editable summary', async (t) => {

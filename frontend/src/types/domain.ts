@@ -177,6 +177,17 @@ export interface MaintenanceCase extends CreateCaseRequest {
   sharing_request?: SharingRequest
 }
 
+export interface ManagerRepair {
+  case: MaintenanceCase
+  address: string
+  unit: string
+}
+
+export interface ManagerRepairGroup {
+  contractor: { id: string; name: string } | null
+  repairs: ManagerRepair[]
+}
+
 export interface CaseEvent {
   id: number
   case_id: string

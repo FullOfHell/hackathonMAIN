@@ -9,6 +9,7 @@ import type {
   IntakeRequest,
   IntakeResponse,
   MaintenanceCase,
+  ManagerRepairGroup,
   PartnerCommand,
   PartnerInboxJob,
   Resident,
@@ -179,6 +180,19 @@ export const api = {
   listUnitCases: (unitId: string): Promise<MaintenanceCase[]> =>
     apiBaseUrl ? request('/api/units/' + encodeURIComponent(unitId) + '/cases')
       : waitForFixture([...demoCases.values()].filter((item) => item.unit_id === unitId).reverse()),
+
+  listManagerRepairs(): Promise<ManagerRepairGroup[]> {
+    if (apiBaseUrl) return request('/api/manager/repairs')
+
+    const repairs = [...demoCases.values()].reverse().map((item) => {
+      const property = demoJobs.get(item.partner_job_id ?? '')?.payload.property
+      const details = residentHomeDetails(demoHome, demoHome.residents[0])
+      return { case: item, address: property?.address ?? details.address, unit: property?.unit ?? details.unit }
+    })
+    return waitForFixture(repairs.length
+      ? [{ contractor: { id: 'p_heatfix', name: 'HeatFix Aachen GmbH' }, repairs }]
+      : [])
+  },
 
   approveSharing: async (
     caseId: string,
