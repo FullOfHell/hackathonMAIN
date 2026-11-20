@@ -3,6 +3,7 @@ import { defaultContractorSlug } from '../repairNotifications'
 import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
 import type {
   CaseEvent,
+  ContactChannel,
   Contractor,
   ContractorInput,
   CreateCaseRequest,
@@ -45,11 +46,13 @@ if (isFixtureMode) {
   }
 }
 
+export const contactChannels: readonly ContactChannel[] = ['portal', 'email', 'phone']
+
 const profileHints: Record<keyof ResidentProfileChanges, string> = {
   name: 'Enter a name of up to 120 characters.',
   email: 'Enter an email address, for example lena@example.com.',
   phone: 'Enter a phone number with 7 to 15 digits, for example +49 151 00000001.',
-  preferred_contact: 'Choose Portal or Email as your preferred contact channel.',
+  preferred_contact: 'Choose Portal, Email or Phone as your preferred contact channel.',
   address: 'Enter an address of up to 200 characters.',
   unit: 'Enter a unit of up to 80 characters.',
   heating: 'Enter a heating type of up to 120 characters.',
@@ -97,8 +100,9 @@ export function profileChanges(resident: Resident, draft: Partial<ResidentProfil
     if (value !== undefined && value !== (resident[field] ?? '')) changes[field] = value
   }
   const channel = draft.preferred_contact
-  if ((channel === 'portal' || channel === 'email') && channel !== resident.preferred_contact) {
-    changes.preferred_contact = channel
+  if (channel !== undefined && (contactChannels as readonly string[]).includes(channel)
+    && channel !== resident.preferred_contact) {
+    changes.preferred_contact = channel as ContactChannel
   }
   return changes
 }

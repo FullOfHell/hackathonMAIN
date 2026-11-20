@@ -5,16 +5,19 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 load_dotenv()
 
 from app.api.cases import router as cases_router  # noqa: E402
 from app.api.dispatch import router as dispatch_router  # noqa: E402
 from app.api.extract import router as intake_router  # noqa: E402
+from app.api.notifications import router as notifications_router  # noqa: E402
 from app.api.partner_events import router as partner_events_router  # noqa: E402
 from app.db import init_db  # noqa: E402
 from app.partners.heatfix import router as delivery_router  # noqa: E402
 from app.partners.registry import router as registry_router  # noqa: E402
+from app.services.notifications import deliver_pending  # noqa: E402
 from app.states import InvalidTransition  # noqa: E402
 
 
@@ -35,8 +38,18 @@ app.include_router(cases_router)
 app.include_router(dispatch_router)
 app.include_router(intake_router)
 app.include_router(partner_events_router)
+app.include_router(notifications_router)
 app.include_router(delivery_router)
 app.include_router(registry_router)
+
+
+@app.middleware("http")
+async def deliver_notifications(request: Request, call_next):
+    response = await call_next(request)
+    # Writes have committed by now. Delivery records failures itself and never raises.
+    if request.method != "GET":
+        await run_in_threadpool(deliver_pending)
+    return response
 
 
 @app.exception_handler(InvalidTransition)

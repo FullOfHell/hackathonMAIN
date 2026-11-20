@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { profileChanges } from './api/client'
+import { contactChannels, profileChanges } from './api/client'
 import type { Resident, ResidentHomeDetails, ResidentProfileChanges, ResidentProfileDraft } from './types/domain'
 
 interface Props {
@@ -71,9 +71,10 @@ export function ResidentProfileEditor({ resident, homeDetails, saving, blocked, 
         onChange={(event) => setDraft({ ...draft, phone: event.target.value })} /></label>
       <label>Preferred contact channel<select value={draft.preferred_contact}
         onChange={(event) => setDraft({ ...draft, preferred_contact: event.target.value })}>
-        {resident.preferred_contact !== 'portal' && resident.preferred_contact !== 'email' &&
+        {!(contactChannels as readonly string[]).includes(resident.preferred_contact ?? '') &&
           <option value={resident.preferred_contact ?? ''} disabled>{resident.preferred_contact || 'Choose a channel'}</option>}
         <option value="portal">Portal</option><option value="email">Email</option>
+        <option value="phone">Phone (text message)</option>
       </select></label>
       <label>Address<input autoComplete="street-address" required maxLength={200} value={draft.address}
         onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label>

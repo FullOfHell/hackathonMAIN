@@ -56,11 +56,13 @@ export interface Resident extends Partial<ResidentHomeDetails> {
   move_in: string | null
 }
 
+export type ContactChannel = 'portal' | 'email' | 'phone'
+
 export type ResidentProfileChanges = Partial<ResidentHomeDetails & {
   name: string
   email: string
   phone: string
-  preferred_contact: 'portal' | 'email'
+  preferred_contact: ContactChannel
 }>
 export type ResidentProfileDraft = Record<keyof ResidentProfileChanges, string>
 

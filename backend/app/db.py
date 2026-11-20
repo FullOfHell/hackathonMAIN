@@ -95,6 +95,31 @@ CREATE TABLE IF NOT EXISTS heatfix_callbacks (
 CREATE TABLE IF NOT EXISTS heatfix_bookings (
   job_id TEXT PRIMARY KEY REFERENCES partner_jobs(id), slot_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS owners (
+  id TEXT PRIMARY KEY, property_id TEXT NOT NULL REFERENCES properties(id), name TEXT NOT NULL,
+  email TEXT, phone TEXT
+);
+-- One notification feeds both the in-app box and the outbound noreply bot.
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT REFERENCES cases(id), property_id TEXT NOT NULL,
+  recipient_type TEXT NOT NULL CHECK (recipient_type IN ('resident','owner','manager')),
+  recipient_id TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+  link TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS notifications_by_recipient ON notifications(recipient_type, recipient_id);
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  recipient_type TEXT NOT NULL, recipient_id TEXT NOT NULL, category TEXT NOT NULL,
+  email INTEGER NOT NULL, text INTEGER NOT NULL, PRIMARY KEY (recipient_type, recipient_id, category)
+);
+CREATE TABLE IF NOT EXISTS notification_contacts (
+  recipient_type TEXT NOT NULL, recipient_id TEXT NOT NULL, telegram_chat_id TEXT, ntfy_topic TEXT,
+  PRIMARY KEY (recipient_type, recipient_id)
+);
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  notification_id INTEGER NOT NULL REFERENCES notifications(id), channel TEXT NOT NULL CHECK (channel IN ('email','text')),
+  status TEXT NOT NULL CHECK (status IN ('sent','sent_simulated','skipped','failed')), error TEXT, sent_at TEXT NOT NULL,
+  PRIMARY KEY (notification_id, channel)
+);
 """
 
 
@@ -134,6 +159,8 @@ def init_db(seed: bool = True) -> None:
                 conn.execute(f"ALTER TABLE residents ADD COLUMN {field} TEXT")
         if "availability_preferences" not in {col["name"] for col in conn.execute("PRAGMA table_info(cases)")}:
             conn.execute("ALTER TABLE cases ADD COLUMN availability_preferences TEXT NOT NULL DEFAULT '[]'")
+        if "ntfy_topic" not in {col["name"] for col in conn.execute("PRAGMA table_info(notification_contacts)")}:
+            conn.execute("ALTER TABLE notification_contacts ADD COLUMN ntfy_topic TEXT")
         if "event_data" not in {col["name"] for col in conn.execute("PRAGMA table_info(processed_partner_events)")}:
             conn.execute("ALTER TABLE processed_partner_events ADD COLUMN event_data TEXT")
             for doc in conn.execute("SELECT event_id,content FROM case_documents"):
@@ -144,6 +171,8 @@ def init_db(seed: bool = True) -> None:
             install_registrations(conn)
             if conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
                 load_seed(conn)
+            elif conn.execute("SELECT COUNT(*) FROM owners").fetchone()[0] == 0:
+                load_owners(conn, json.loads(SEED_PATH.read_text(encoding="utf-8")))
         if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
             from app.services.invoices import review_legacy_invoices
             review_legacy_invoices(conn)
@@ -164,6 +193,7 @@ def load_seed(conn: sqlite3.Connection) -> None:
     for r in data["residents"]:
         conn.execute("INSERT INTO residents (id,unit_id,name,email,phone,preferred_contact,move_in) VALUES (?,?,?,?,?,?,?)",
                      (r["id"], r["unit_id"], r["name"], r["email"], r["phone"], r["preferred_contact"], r["move_in"]))
+    load_owners(conn, data)
     for pa in data["partners"]:
         conn.execute("INSERT INTO partners VALUES (?,?,?,?,?,?)",
                      (pa["id"], pa["name"], json.dumps(pa["service_types"]), json.dumps(pa["regions"]),
@@ -177,3 +207,9 @@ def load_seed(conn: sqlite3.Connection) -> None:
              c["created_at"], c["updated_at"]))
         conn.execute("INSERT INTO case_events (case_id,type,actor,timestamp,payload) VALUES (?,?,?,?,?)",
                      (c["id"], "seed.historical_case", "seed", c["updated_at"], json.dumps({"status": c["status"]})))
+
+
+def load_owners(conn: sqlite3.Connection, data: dict) -> None:
+    for o in data.get("owners", []):
+        conn.execute("INSERT INTO owners (id,property_id,name,email,phone) VALUES (?,?,?,?,?)",
+                     (o["id"], o["property_id"], o["name"], o["email"], o.get("phone")))
