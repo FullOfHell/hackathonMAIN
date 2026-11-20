@@ -11,15 +11,16 @@ This checklist turns the project plan into an execution order for the three-pers
   - C - AI/Integrations: extraction, partner connector, n8n and connector documentation.
 - [ ] Freeze shared contracts for unit context, case creation, case states, partner jobs and callbacks.
 - [x] Commit representative JSON fixtures used by all three contributors.
-- [ ] Create `frontend/`, `backend/`, `n8n/` and test directories.
+- [x] Create `frontend/`, `backend/`, `n8n/` and test directories.
 - [x] Add `.gitignore`, `.env.example` and initial development commands.
 - [ ] Create short-lived branches for each contributor's first slice.
 
 ## P0 - Core backend
 
 - [x] Create the FastAPI application and configure SQLite.
-- [ ] Model property, unit, resident, maintenance case and immutable case events.
-- [ ] Model sharing approval, partner job, appointment, completion report and invoice document.
+- [x] Model property, unit, resident, maintenance case and an append-only case timeline.
+- [x] Model sharing approval, partner job and appointment.
+- [ ] Model completion reports and invoice documents.
 - [x] Seed one fictional property, resident, prior heating case and active contractor.
 - [ ] Implement and validate the main state sequence:
   - `REPORTED`
@@ -53,7 +54,8 @@ Target milestone:
 - [x] Require explicit approval and persist the approval record.
 - [x] Create the generic connector interface.
 - [x] Implement the simulated HeatFix partner.
-- [ ] Route the approved case through n8n.
+- [x] Implement the optional n8n dispatch path and test retry with a simulated webhook.
+- [ ] Verify the approved case goes through the live n8n workflow in the demo environment.
 - [x] Add an idempotency key so retries cannot create duplicate jobs.
 - [x] Display the received job in a basic partner dashboard.
 - [x] Test retrying the same sharing approval.
@@ -62,16 +64,18 @@ Do not begin P1 work until this milestone is reliable.
 
 ## P0 - Complete the repair loop
 
-- [x] Let the partner accept or reject a job.
-- [x] Let the partner offer appointment slots.
+- [x] Add backend endpoints for partner acceptance, rejection and slot offers.
+- [ ] Add accept, reject and offer-slot controls to the HeatFix inbox.
 - [ ] Display slots in the tenant portal.
-- [x] Require tenant confirmation before booking.
+- [x] Validate resident identity and slot selection in the booking API.
+- [ ] Add a resident confirmation step and show the booked appointment returned by the API.
 - [x] Persist the selected appointment.
 - [ ] Let the partner mark work in progress and completed.
 - [ ] Attach a synthetic repair report and invoice.
 - [ ] Link the appointment, completion and invoice to the original case and unit.
 - [ ] Build the property-manager/unit view.
-- [ ] Display the complete persisted event timeline.
+- [x] Display the persisted timeline after the initial partner handoff.
+- [ ] Refresh the resident timeline as the case progresses and show it in the manager view.
 - [ ] Drive all visible progress from backend state, not UI-only state.
 
 ## P0 - AI intake
@@ -94,15 +98,15 @@ Do not begin P1 work until this milestone is reliable.
 - [ ] Define timeout, rejection and unavailable-provider behavior.
 - [x] Trace every request and callback to the original case.
 - [x] Create `Docs/connector-spec.md`.
-- [ ] Export n8n workflows without credentials.
+- [x] Export the approved-case n8n workflow with placeholders.
 - [ ] Keep all tokens and secrets in environment variables.
 
 ## P0 - Tests and demo readiness
 
-- [ ] Test case creation and correct unit association.
+- [x] Test case creation and correct unit association.
 - [x] Test persistence across backend restarts.
-- [ ] Test approval records and shared fields.
-- [ ] Test duplicate partner-job submission.
+- [x] Test approval records and shared fields.
+- [x] Test duplicate partner-job submission.
 - [x] Test slot selection and appointment persistence.
 - [x] Test valid and invalid state transitions.
 - [x] Test duplicate and invalid partner callbacks.
@@ -112,6 +116,14 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
+
+## P0 - Product / Frontend remaining work
+
+1. **Booking loop.** Add HeatFix accept, reject and offer-slot controls. Refresh the resident's case so offered slots appear, require explicit confirmation, and show the appointment only after FastAPI confirms it. Show declines, unavailable providers and retryable failures clearly.
+2. **Manager / unit view.** Show cases for the unit, who received the job, what was approved for sharing, the appointment and the backend event timeline. The unit case and event APIs already exist.
+3. **Repair completion and invoice.** Coordinate the contract with B, then wire the partner's start/complete actions and invoice attachment. Show the result on the resident and manager views once the APIs are ready.
+4. **Intake handoff.** Coordinate with C on structured extraction and missing-detail prompts. Keep typed intake usable without the AI service.
+5. **Demo and QA.** Write the walkthrough and rehearse from a fresh seed through report, approval, booking, completion and invoice. Include a retry and a reject or no-provider path, and verify the timeline matches persisted events.
 
 ## P1 - Differentiators
 
@@ -148,10 +160,8 @@ Implement in this order after P0 is stable:
 - [ ] Show one stable differentiator after the complete P0 flow.
 - [ ] Submit the project, code and video before the event deadline.
 
-## Recommended parallel starting work
+## Next team handoffs
 
-- **A - Frontend:** tenant report and sharing-approval UI using shared fixtures.
-- **B - Backend:** database, seed data, case creation and event timeline.
-- **C - Integrations:** mock partner API, idempotent job creation and n8n connectivity.
-
-Reconnect these pieces as early as possible and prove that one approved resident report produces exactly one persistent partner job.
+- **A - Frontend:** connect the inbox and tenant portal to the booking endpoints, then add the manager/unit view.
+- **B - Backend:** define and implement repair completion and invoice persistence.
+- **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.
