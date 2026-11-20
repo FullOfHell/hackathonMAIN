@@ -59,6 +59,14 @@ def get_case(conn: sqlite3.Connection, case_id: str) -> dict | None:
         return None
     case = dict(row)
     case["symptoms"] = json.loads(case["symptoms"])
+    case["availability_preferences"] = json.loads(case["availability_preferences"])
+    case["slots"] = [dict(slot) for slot in conn.execute(
+        "SELECT slot_id,start,end FROM appointment_slots WHERE case_id=? ORDER BY julianday(start),slot_id",
+        (case_id,))]
+    appointment = conn.execute(
+        "SELECT a.case_id,a.slot_id,s.start,s.end,a.booked_at FROM appointments a "
+        "JOIN appointment_slots s USING (case_id,slot_id) WHERE a.case_id=?", (case_id,)).fetchone()
+    case["appointment"] = dict(appointment) if appointment else None
     appr = conn.execute("SELECT * FROM sharing_approvals WHERE case_id=?", (case_id,)).fetchone()
     case["sharing_approval"] = ({**dict(appr), "shared_fields": json.loads(appr["shared_fields"])} if appr else None)
     return case

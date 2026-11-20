@@ -39,7 +39,7 @@ The prototype uses synthetic residents, properties, partners, and documents. It 
 - Structured LLM extraction for issue intake; the model never invents booking or repair status.
 - ElevenLabs voice as a P1 enhancement, with the typed portal as the reliable fallback.
 
-The detailed folder layout and API contracts are defined in the project plan. Add runnable setup commands here as soon as the first application skeleton is merged; do not invent commands for components that do not exist yet.
+The project plan describes the full demo. The implemented booking and callback contracts are in the [connector specification](Docs/connector-spec.md).
 
 ## Frontend development
 
@@ -62,16 +62,27 @@ Shared frontend, backend and integration fixtures are stored in `shared/fixtures
 
 ## Run the backend
 
+From the repository root, use Python 3.10 or newer. In PowerShell run the following commands.
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+```
+
+In Bash, activate the virtual environment first.
+
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp ../.env.example .env                             # then fill in keys
 python -m pytest -q                                 # vertical-slice tests
 python -m uvicorn app.main:app --reload --port 8000
 ```
 
-API docs: http://localhost:8000/docs. The SQLite database is created and seeded on first start (`backend/data/app.db`, git-ignored); delete it to reset the demo.
+Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLite databases in `backend/data/app.db` and upgrades existing cases in place. Defaults run both the centrix stand-in and simulated HeatFix on port 8000. For other addresses or a custom shared secret, set `PUBLIC_BACKEND_URL`, `PARTNER_BASE_URL` and `PARTNER_WEBHOOK_SECRET` in the environment or in `backend/.env`. See the [environment template](.env.example).
 
 For ElevenLabs and n8n (cloud services), expose the backend with `cloudflared tunnel --url http://localhost:8000` and put the HTTPS URL in `PUBLIC_BACKEND_URL`.
 
@@ -87,4 +98,4 @@ Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Current status
 
-Backend vertical slice works and is tested: resident submits issue → persistent case → sharing approval recorded → mock partner receives exactly one job (idempotent). Next: slots, booking, partner callbacks (Workflow 2), invoice, and the three UIs.
+The tested backend flow reaches `SCHEDULED` when the reporting resident selects an offered slot and HeatFix confirms the booking. A rejected job reaches `DECLINED`. The tenant frontend includes a fixture-backed intake screen. Slot selection in the portal, completion records and invoices are subsequent milestones.
