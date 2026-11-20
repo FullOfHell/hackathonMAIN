@@ -1,17 +1,22 @@
 """Team milestone: resident submits issue -> persistent case -> approval recorded -> partner receives exactly one job."""
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from app.db import connect
 from app.integrations.connector import get_partner_client
 from app.states import ALLOWED_TRANSITIONS, CaseStatus, InvalidTransition, check_transition
 
 FIXTURES = Path(__file__).resolve().parents[2] / "shared" / "fixtures"
+UNIT_URL = "/api/units/unit_4b"
+PROFILE_URL = UNIT_URL + "/residents/c_202/profile"
+ACTOR = {"acting_resident_id": "c_202"}
 
 
 def load(name):
@@ -32,6 +37,98 @@ def test_unit_context_has_prior_heating_case(client):
 
 def test_shared_unit_context_fixture_matches_api(client):
     assert client.get("/api/units/unit_4b/context").json() == load("unit-context.json")
+
+
+@pytest.mark.parametrize("change", [{"phone": "+49 151 00000001"}, {"preferred_contact": "email"}])
+def test_profile_patch_preserves_omitted_fields_on_retry_and_restart(client, change):
+    context = load("unit-context.json")
+    expected = context["residents"][0] | change
+    cases = client.get(UNIT_URL + "/cases").json()
+    timeline = client.get("/api/cases/case_000/events").json()
+    other_unit = client.get("/api/units/unit_2a/context").json()
+    body = ACTOR | {key: f"  {value}  " for key, value in change.items()}
+    for _ in range(2):
+        response = client.patch(PROFILE_URL, json=body)
+        assert response.status_code == 200, response.text
+        assert response.json() == expected
+
+    with TestClient(client.app) as restarted:
+        assert restarted.get(UNIT_URL + "/context").json() == context | {"residents": [expected]}
+        assert restarted.get("/api/units/unit_2a/context").json() == other_unit
+        assert restarted.get(UNIT_URL + "/cases").json() == cases
+        assert restarted.get("/api/cases/case_000/events").json() == timeline
+        assert restarted.get("/partners/heatfix/connector/jobs").json() == []
+
+
+def test_concurrent_partial_saves_preserve_both_edits_for_second_resident(client):
+    unit_url = "/api/units/unit_2a"
+    original, = client.get(unit_url + "/context").json()["residents"]
+    url = f"{unit_url}/residents/{original['id']}/profile"
+    edits = {"name": "Mika Beispiel", "preferred_contact": "portal"}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        requests = [pool.submit(client.patch, url, json={"acting_resident_id": original["id"], field: value})
+                    for field, value in edits.items()]
+        for request in requests:
+            assert request.result().status_code == 200
+    assert client.get(unit_url + "/context").json()["residents"] == [original | edits]
+    assert client.get(UNIT_URL + "/context").json() == load("unit-context.json")
+
+
+@pytest.mark.parametrize("body", [
+    {}, ACTOR, {"name": "Lena"}, {"acting_resident_id": " ", "name": "Lena"},
+    ACTOR | {"name": "  "}, ACTOR | {"email": " "}, ACTOR | {"phone": " "},
+    ACTOR | {"preferred_contact": " "}, ACTOR | {"preferred_contact": "sms"},
+    ACTOR | {"phone": None}, ACTOR | {"phone": 4915100000001},
+    ACTOR | {"phone": "call 0000000"}, ACTOR | {"phone": "+49"},
+    ACTOR | {"email": "missing-at.example.com"}, ACTOR | {"email": "a@b..example"},
+])
+def test_invalid_profile_patch_returns_422_without_saving(client, body):
+    assert client.patch(PROFILE_URL, json=body).status_code == 422
+    assert client.get(UNIT_URL + "/context").json() == load("unit-context.json")
+
+
+@pytest.mark.parametrize("field", [
+    "id", "resident_id", "unit_id", "address", "heating", "heating_type", "move_in", "access_details", "unknown",
+])
+def test_read_only_or_unexpected_field_rejects_entire_patch(client, field):
+    response = client.patch(PROFILE_URL, json=ACTOR | {"name": "Changed", field: "forbidden"})
+    assert response.status_code == 422
+    assert client.get(UNIT_URL + "/context").json() == load("unit-context.json")
+
+
+@pytest.mark.parametrize(("unit", "resident", "actor", "status"), [
+    ("unit_4b", "c_202", "c_203", 403),
+    ("unit_2a", "c_202", "c_202", 404),
+    ("unit_4b", "unknown", "unknown", 404),
+    ("unknown", "c_202", "c_202", 404),
+])
+def test_profile_patch_requires_matching_actor_and_unit(client, unit, resident, actor, status):
+    response = client.patch(f"/api/units/{unit}/residents/{resident}/profile",
+                            json={"acting_resident_id": actor, "name": "Changed"})
+    assert response.status_code == status
+    assert client.get(UNIT_URL + "/context").json() == load("unit-context.json")
+
+
+@pytest.mark.parametrize("optional_fields", [[], ["name"], ["contact"], ["name", "contact"]])
+def test_approval_shares_only_selected_updated_profile_fields(client, optional_fields):
+    case = create_case(client)
+    url = f"/api/cases/{case['id']}"
+    timeline = client.get(url + "/events").json()
+    contact = {"email": "lena.updated@example.com", "phone": "+49 151 00000001"}
+    profile = {"name": "Lena Beispiel", **contact, "preferred_contact": "portal"}
+    response = client.patch(PROFILE_URL, json=ACTOR | {k: f" {v} " for k, v in profile.items()})
+    assert response.status_code == 200, response.text
+    assert response.json() == load("unit-context.json")["residents"][0] | profile
+    assert client.get(url).json() == case
+    assert client.get(url + "/events").json() == timeline
+    assert client.get("/partners/heatfix/connector/jobs").json() == []
+
+    fields = case["sharing_request"]["required_fields"] + optional_fields
+    approved = client.post(url + "/sharing-approval", json={"approved_by": "c_202", "approved_fields": fields})
+    assert approved.status_code == 200, approved.text
+    job, = client.get("/partners/heatfix/connector/jobs").json()
+    expected = {"name": profile["name"], "contact": contact}
+    assert job["payload"]["resident"] == {key: expected[key] for key in optional_fields}
 
 
 def test_case_created_and_awaits_approval(client):
@@ -220,8 +317,10 @@ def test_direct_dispatch_lost_reply_retries_only_original_approval(client):
     assert pending["status"] == "PARTNER_REQUESTED" and pending["partner_job_id"] is None
     assert client.post(url, json=approval | {"approved_fields": ["address", "unit", "issue"]}).status_code == 409
     original = client.get("/partners/heatfix/connector/jobs").json()[0]["payload"]
-    with closing(connect()) as conn, conn:
-        conn.execute("UPDATE residents SET email='updated@example.com' WHERE id=?", (case["resident_id"],))
+    new_phone = "+49 151 00000001"
+    assert original["resident"]["contact"]["phone"] != new_phone
+    edited = client.patch(PROFILE_URL, json=ACTOR | {"phone": new_phone})
+    assert edited.status_code == 200 and edited.json()["phone"] == new_phone
 
     def confirm_retry(request):
         assert json.loads(request.content) == original

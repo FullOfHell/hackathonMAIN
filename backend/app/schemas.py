@@ -1,7 +1,8 @@
 """API request/response models. Shared team contract: see Docs/Reltix_Hackathon_Project_Plan.md §5."""
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from typing_extensions import Required, TypedDict
 
 IssueType = Annotated[str, Field(max_length=64, pattern=r"^[a-z][a-z0-9_]*$")]
 Urgency = Literal["low", "normal", "high"]
@@ -92,6 +93,41 @@ class BuildingJobScope(BaseModel):
 
 class ResidentAction(BaseModel):
     resident_id: str
+
+
+_EMAIL_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+_DOMAIN_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_PATTERN = rf"^{_EMAIL_ATOM}(?:\.{_EMAIL_ATOM})*@{_DOMAIN_LABEL}(?:\.{_DOMAIN_LABEL})+$"
+_PHONE_GROUP = r"(?:[0-9]+|\([0-9]+\))"
+
+
+def _validate_phone_length(phone: str) -> str:
+    if not 7 <= sum(char.isdigit() for char in phone) <= 15:
+        raise ValueError("phone must contain 7 to 15 digits")
+    return phone
+
+
+class ResidentProfilePatch(TypedDict, total=False):
+    """The acting ID simulates resident identity in the demo. Omit fields to keep their values."""
+    __pydantic_config__ = ConfigDict(strict=True, extra="forbid", str_strip_whitespace=True,
+                                     json_schema_extra={"minProperties": 2})
+
+    acting_resident_id: Required[Annotated[str, Field(min_length=1)]]
+    name: Annotated[str, Field(min_length=1, max_length=120)]
+    email: Annotated[str, Field(max_length=254, pattern=_EMAIL_PATTERN)]
+    phone: Annotated[str, Field(max_length=40, pattern=rf"^\+?{_PHONE_GROUP}(?:[ .-]?{_PHONE_GROUP})*$"),
+                     AfterValidator(_validate_phone_length)]
+    preferred_contact: Annotated[str, Field(pattern=r"^(portal|email)$")]
+
+
+class ResidentProfile(BaseModel):
+    id: str
+    unit_id: str
+    name: str
+    email: str | None
+    phone: str | None
+    preferred_contact: str | None
+    move_in: str | None
 
 
 class ResidentSlotChoice(SlotChoice, ResidentAction):
