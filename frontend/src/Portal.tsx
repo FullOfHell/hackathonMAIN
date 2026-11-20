@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
+import { VoiceDraft } from './VoiceDraft'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
@@ -284,6 +285,11 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
                 onClick={() => { setIssue((value) => value.trim() ? value.trim() + '\n' + text : text); setSafety(false) }}
                 disabled={busy || issue.trim().length + text.length + 1 > reportLimit}>{text}</button>)}
             </div>
+            {active && !isFixtureMode && <VoiceDraft remaining={reportLimit - issue.trim().length - Number(Boolean(issue.trim()))}
+              disabled={busy} onAdd={(text) => {
+                setIssue((draft) => [draft.trim(), text].filter(Boolean).join('\n'))
+                setSafety(false)
+              }} />}
             {isFixtureMode && !hotWaterReported && <fieldset>
               <legend>Is hot water also affected? <span className="muted">(optional)</span></legend>
               <div className="radio-group">
