@@ -40,7 +40,13 @@ export interface IntakeResponse {
   result: IntakeResult
 }
 
-export interface Resident {
+export interface ResidentHomeDetails {
+  address: string
+  unit: string
+  heating: string
+}
+
+export interface Resident extends Partial<ResidentHomeDetails> {
   id: string
   unit_id: string
   name: string
@@ -50,7 +56,7 @@ export interface Resident {
   move_in: string | null
 }
 
-export type ResidentProfileChanges = Partial<{
+export type ResidentProfileChanges = Partial<ResidentHomeDetails & {
   name: string
   email: string
   phone: string
@@ -94,6 +100,7 @@ export interface SharingApprovalRequest {
   approved_fields: string[]
   channel: Channel
   approved_by: string
+  expected_partner_id?: string
 }
 
 export interface SharingApproval {

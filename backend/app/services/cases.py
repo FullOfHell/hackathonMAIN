@@ -1,9 +1,11 @@
 """Case domain logic: creation, validated transitions, event timeline, partner routing."""
 import json
+import re
 import sqlite3
 import uuid
+from unicodedata import combining, normalize
 
-from app.db import now_iso
+from app.db import RESIDENT_HOME_FIELDS, now_iso
 from app.states import CaseStatus, check_transition
 
 
@@ -35,13 +37,21 @@ def transition(conn: sqlite3.Connection, case_id: str, target: CaseStatus, actor
             transition(conn, member["case_id"], CaseStatus.NEEDS_HUMAN_REVIEW, "system", notice)
 
 
+def resident_profile(row: sqlite3.Row) -> dict:
+    profile = dict(row)
+    for field in RESIDENT_HOME_FIELDS:
+        if profile.get(field) is None:
+            profile.pop(field, None)
+    return profile
+
+
 def unit_context(conn: sqlite3.Connection, unit_id: str) -> dict | None:
     u = conn.execute(
         "SELECT u.*, p.address, p.building_year, p.heating_type, p.region, p.access_details "
         "FROM units u JOIN properties p ON p.id=u.property_id WHERE u.id=?", (unit_id,)).fetchone()
     if not u:
         return None
-    residents = [dict(r) for r in conn.execute("SELECT * FROM residents WHERE unit_id=?", (unit_id,))]
+    residents = [resident_profile(r) for r in conn.execute("SELECT * FROM residents WHERE unit_id=?", (unit_id,))]
     prior = [dict(c) for c in conn.execute(
         "SELECT id, issue_type, description, status, created_at FROM cases WHERE unit_id=? AND issue_type='heating_repair' "
         "ORDER BY created_at DESC", (unit_id,))]
@@ -55,16 +65,39 @@ def unit_context(conn: sqlite3.Connection, unit_id: str) -> dict | None:
     }
 
 
-def select_partner(conn: sqlite3.Connection, service_type: str, region: str) -> dict | None:
+def normalize_location(value: str) -> str:
+    text = "".join(character for character in normalize("NFKD", value.casefold()) if not combining(character))
+    return " ".join(re.findall(r"[^\W_]+", text))
+
+
+def repair_region(conn: sqlite3.Connection, ctx: dict, resident: dict) -> str | None:
+    original = ctx["property"]
+    address = resident.get("address")
+    if not address or normalize_location(address) == normalize_location(original["address"]):
+        return original["region"]
+    location = re.sub(r" (?:germany|deutschland|de)$", "", normalize_location(address))
+    location = re.sub(r" [0-9]{5}$", "", location)
+    regions = {normalize_location(original["region"])}
+    for row in conn.execute("SELECT regions FROM partners"):
+        regions.update(normalize_location(region) for region in json.loads(row["regions"]))
+    return max((region for region in regions if region and (region == location or location.endswith(" " + region))),
+               key=len, default=None)
+
+
+def select_partner(conn: sqlite3.Connection, service_type: str, region: str | None) -> dict | None:
     """Deterministic routing (plan §6C): service type -> region -> active; tie-break by name."""
-    eligible = []
-    for p in conn.execute("SELECT p.* FROM partners p LEFT JOIN partner_capabilities k ON k.partner_id=p.id "
-                          "WHERE p.active=1 AND (k.manifest IS NULL OR (json_extract(k.manifest,'$.kind')='delivery' "
-                          "AND 'maintenance.case_created' IN (SELECT value FROM json_each(k.manifest,'$.triggers')))) "
+    if region is None:
+        return None
+    region_key = normalize_location(region)
+    for p in conn.execute("SELECT p.* FROM partners p JOIN partner_capabilities k ON k.partner_id=p.id "
+                          "WHERE p.active=1 AND json_extract(k.manifest,'$.kind')='delivery' "
+                          "AND 'maintenance.case_created' IN (SELECT value FROM json_each(k.manifest,'$.triggers')) "
                           "ORDER BY p.name,p.id"):
-        if service_type in json.loads(p["service_types"]) and region in json.loads(p["regions"]):
-            eligible.append(dict(p))
-    return eligible[0] if eligible else None
+        if service_type in json.loads(p["service_types"]) and any(
+                region_key == normalize_location(area) for area in json.loads(p["regions"])
+        ):
+            return dict(p)
+    return None
 
 
 def new_case_id() -> str:

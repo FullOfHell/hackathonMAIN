@@ -26,10 +26,29 @@ def _case_or_404(conn, case_id):
     return case
 
 
+UNAPPROVED_REPAIR_STATES = {CaseStatus.AWAITING_SHARING_APPROVAL, CaseStatus.NO_PROVIDER_AVAILABLE}
+
+
+def _current_contractor(conn, case):
+    """Re-evaluate saved address edits before an unapproved case is shared."""
+    ctx = svc.unit_context(conn, case["unit_id"])
+    resident = next((r for r in ctx["residents"] if r["id"] == case["resident_id"]), None)
+    if not resident:
+        return None
+    partner = svc.select_partner(conn, case["issue_type"], svc.repair_region(conn, ctx, resident))
+    return partner["id"] if partner else None
+
+
 def _with_sharing_request(conn, case):
-    if case["status"] == CaseStatus.AWAITING_SHARING_APPROVAL.value and case["partner_id"]:
-        p = conn.execute("SELECT id, name FROM partners WHERE id=?", (case["partner_id"],)).fetchone()
-        case["sharing_request"] = {"partner": dict(p), **sharing_policy(conn, case["partner_id"])}
+    if case["status"] in UNAPPROVED_REPAIR_STATES and not case["sharing_approval"]:
+        partner_id = _current_contractor(conn, case)
+        case["status"] = (CaseStatus.AWAITING_SHARING_APPROVAL if partner_id else CaseStatus.NO_PROVIDER_AVAILABLE)
+        if partner_id != case["partner_id"]:
+            case["partner_id"] = partner_id
+            case["building_repair"] = None
+        if partner_id:
+            partner = conn.execute("SELECT id, name FROM partners WHERE id=?", (partner_id,)).fetchone()
+            case["sharing_request"] = {"partner": dict(partner), **sharing_policy(conn, partner_id)}
     return case
 
 
@@ -46,7 +65,8 @@ def get_unit_context(unit_id: str, conn=Depends(get_db)):
     return ctx
 
 
-@router.patch("/units/{unit_id}/residents/{resident_id}/profile", response_model=ResidentProfile)
+@router.patch("/units/{unit_id}/residents/{resident_id}/profile", response_model=ResidentProfile,
+              response_model_exclude_unset=True)
 def update_resident_profile(unit_id: str, resident_id: str, body: ResidentProfilePatch, conn=Depends(get_db)):
     changes = {field: value for field, value in body.items() if field != "acting_resident_id"}
     if not changes:
@@ -63,13 +83,13 @@ def update_resident_profile(unit_id: str, resident_id: str, body: ResidentProfil
         ).fetchone()
         if resident is None:
             raise HTTPException(404, "resident not found for this unit")
-        return dict(resident)
+        return svc.resident_profile(resident)
 
 
 @router.get("/units/{unit_id}/cases")
 def get_unit_cases(unit_id: str, conn=Depends(get_db)):
     conn.execute("BEGIN")
-    return [svc.get_case(conn, r["id"]) for r in
+    return [_with_sharing_request(conn, svc.get_case(conn, r["id"])) for r in
             conn.execute("SELECT id FROM cases WHERE unit_id=? ORDER BY created_at DESC", (unit_id,))]
 
 
@@ -79,7 +99,8 @@ def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(g
     ctx = svc.unit_context(conn, body.unit_id)
     if not ctx:
         raise HTTPException(404, "unit not found")
-    if body.resident_id not in {r["id"] for r in ctx["residents"]}:
+    resident = next((r for r in ctx["residents"] if r["id"] == body.resident_id), None)
+    if resident is None:
         raise HTTPException(422, "resident does not belong to unit")
     case_id, ts = svc.new_case_id(), now_iso()
     conn.execute("INSERT INTO cases (id,unit_id,resident_id,issue_type,description,symptoms,urgency,status,"
@@ -91,12 +112,14 @@ def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(g
     svc.record_event(conn, case_id, "maintenance.case_created", f"resident:{body.resident_id}",
                      {"channel": body.source_channel, "issue_type": body.issue_type, "unit_id": body.unit_id})
     svc.transition(conn, case_id, CaseStatus.TRIAGED, "system")
-    partner = svc.select_partner(conn, body.issue_type, ctx["property"]["region"])
+    region = svc.repair_region(conn, ctx, resident)
+    partner = svc.select_partner(conn, body.issue_type, region)
     if partner:
         conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner["id"], case_id))
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
                        {"partner_id": partner["id"], "reason": "service_type + region match"})
-        outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
+        if svc.normalize_location(region) == svc.normalize_location(ctx["property"]["region"]):
+            outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
     else:
         svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system",
                        {"reason": "no active partner covers this service and region"})
@@ -167,6 +190,9 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     if case["sharing_approval"] and fields != sorted(set(case["sharing_approval"]["shared_fields"])):
         raise HTTPException(409, "sharing approval already records a different set of fields")
 
+    if body.expected_partner_id is not None and case["sharing_approval"] and case["partner_id"] != body.expected_partner_id:
+        raise HTTPException(409, "The saved approval already names a different contractor.")
+
     # Idempotent: a repeated approval after the job was requested returns the existing state.
     if case["sharing_approval"] and case["partner_job_id"]:
         conn.commit()
@@ -178,6 +204,22 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
     if not case["sharing_approval"]:
         if case["status"] == CaseStatus.LINKED_TO_BUILDING_REPAIR:
             raise HTTPException(409, "this report follows a building repair; no additional sharing is needed")
+        if case["status"] in UNAPPROVED_REPAIR_STATES:
+            partner_id = _current_contractor(conn, case)
+            if not partner_id:
+                raise HTTPException(409, "No contractor covers the saved repair address.")
+            previewed_partner = case["partner_id"] if body.expected_partner_id is None else body.expected_partner_id
+            if previewed_partner != partner_id:
+                raise HTTPException(409, "The contractor changed. Review the sharing details again.")
+            if partner_id != case["partner_id"]:
+                outages.withdraw(conn, case_id, case["building_repair"])
+                conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner_id, case_id))
+                svc.record_event(conn, case_id, "partner.routing_updated", "system",
+                                 {"previous_partner_id": case["partner_id"], "partner_id": partner_id})
+                case = svc.get_case(conn, case_id)
+            if case["status"] == CaseStatus.NO_PROVIDER_AVAILABLE:
+                svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
+                               {"partner_id": partner_id})
         policy = sharing_policy(conn, case["partner_id"])
         unknown = set(fields) - set(policy["shareable_fields"])
         missing = set(policy["required_fields"]) - set(fields)

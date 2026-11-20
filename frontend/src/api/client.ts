@@ -12,6 +12,7 @@ import type {
   PartnerCommand,
   PartnerInboxJob,
   Resident,
+  ResidentHomeDetails,
   ResidentProfileChanges,
   ResidentProfileDraft,
   SharingApprovalRequest,
@@ -24,7 +25,9 @@ const demoCases = new Map<string, MaintenanceCase>()
 const demoJobs = new Map<string, PartnerInboxJob>()
 const demoEvents = new Map<string, CaseEvent[]>()
 const demoHome = structuredClone(unitContextFixture)
-const profileFields = ['name', 'email', 'phone', 'preferred_contact'] as const
+const profileTextFields = ['name', 'email', 'phone', 'address', 'unit', 'heating'] as const
+const profileFields = [...profileTextFields, 'preferred_contact'] as const
+const homeDetailLengths = { address: 200, unit: 80, heating: 120 } as const
 
 function fixtureProfileKey(resident: Resident) {
   return 'centrix:fixture:profile:' + resident.unit_id + ':' + resident.id
@@ -46,6 +49,9 @@ const profileHints: Record<keyof ResidentProfileChanges, string> = {
   email: 'Enter an email address, for example lena@example.com.',
   phone: 'Enter a phone number with 7 to 15 digits, for example +49 151 00000001.',
   preferred_contact: 'Choose Portal or Email as your preferred contact channel.',
+  address: 'Enter an address of up to 200 characters.',
+  unit: 'Enter a unit of up to 80 characters.',
+  heating: 'Enter a heating type of up to 120 characters.',
 }
 
 const waitForFixture = async <T>(value: T): Promise<T> => {
@@ -75,11 +81,19 @@ function partnerJobsPath(partnerSlug: string) {
   return '/partners/' + encodeURIComponent(partnerSlug) + '/connector/jobs'
 }
 
-export function profileChanges(resident: Resident, draft: ResidentProfileDraft): ResidentProfileChanges {
+export function residentHomeDetails(home: UnitContext, resident: Resident): ResidentHomeDetails {
+  return {
+    address: resident.address ?? home.property.address,
+    unit: resident.unit ?? home.unit.label,
+    heating: resident.heating ?? home.property.heating,
+  }
+}
+
+export function profileChanges(resident: Resident, draft: Partial<ResidentProfileDraft>): ResidentProfileChanges {
   const changes: ResidentProfileChanges = {}
-  for (const field of ['name', 'email', 'phone'] as const) {
-    const value = draft[field].trim()
-    if (value !== (resident[field] ?? '')) changes[field] = value
+  for (const field of profileTextFields) {
+    const value = draft[field]?.trim()
+    if (value !== undefined && value !== (resident[field] ?? '')) changes[field] = value
   }
   const channel = draft.preferred_contact
   if ((channel === 'portal' || channel === 'email') && channel !== resident.preferred_contact) {
@@ -113,6 +127,10 @@ export const api = {
     }
     if (changes.email !== undefined && !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(changes.email)) throw new Error(profileHints.email)
     if (changes.name !== undefined && !changes.name) throw new Error(profileHints.name)
+    for (const field of ['address', 'unit', 'heating'] as const) {
+      const value = changes[field]
+      if (value !== undefined && (!value.trim() || value.length > homeDetailLengths[field])) throw new Error(profileHints[field])
+    }
     Object.assign(resident, changes)
     try {
       sessionStorage.setItem(fixtureProfileKey(resident), JSON.stringify(
@@ -279,14 +297,14 @@ async function approveDemoCase(caseId: string, body: SharingApprovalRequest): Pr
   const fields = body.approved_fields
   const resident = demoHome.residents.find((item) => item.unit_id === demoCase.unit_id && item.id === demoCase.resident_id)
   if (!resident || resident.id !== body.approved_by) throw new Error('Only the reporting resident can approve sharing.')
-  const property = demoHome.property
+  const homeDetails = residentHomeDetails(demoHome, resident)
   demoJobs.set(jobId, {
     id: jobId, request_id: caseId, status: 'received', received_at: now,
     payload: {
       ...partnerJobFixture, request_id: caseId, idempotency_key: caseId + '-heating_repair-v1',
       property: {
-        address: property.address, unit: demoHome.unit.label,
-        ...(fields.includes('heating_type') && { heating_type: property.heating }),
+        address: homeDetails.address, unit: homeDetails.unit,
+        ...(fields.includes('heating_type') && { heating_type: homeDetails.heating }),
       },
       issue: {
         description: demoCase.description, symptoms: demoCase.symptoms,

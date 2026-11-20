@@ -231,3 +231,80 @@ def test_manager_cannot_replace_a_contractor_or_override_connector_url(client):
         assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | invalid).status_code == 422
     saved = client.get(MANAGER_CONTRACTORS).json()
     assert [row["name"] for row in saved if row["slug"] == MANAGER_CONTRACTOR["slug"]] == [MANAGER_CONTRACTOR["name"]]
+
+
+@pytest.mark.parametrize("city", ["Düsseldorf", "Dusseldorf"])
+def test_edited_repair_address_routes_to_contractor_in_that_city(client, city):
+    address = f"Synthetic Street 15, 40210 {city}, Germany"
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    contractor = MANAGER_CONTRACTOR | {"name": "HeetsFix", "slug": "dusseldorf-heating", "region": "Dusseldorf"}
+    assert client.post(MANAGER_CONTRACTORS, json=contractor).status_code == 201
+    assert client.patch(profile, json={"acting_resident_id": "c_202", "address": address}).status_code == 200
+
+    case = create_case(client)
+    expected = {"id": "p_manager_dusseldorf-heating", "name": "HeetsFix"}
+    assert case["sharing_request"]["partner"] == expected
+    assert case["unit_id"] == "unit_4b"
+    assert case["building_repair"] is None
+
+    approval = f"/api/cases/{case['id']}/sharing-approval"
+    approved = client.post(approval, json=CONSENT | {"expected_partner_id": expected["id"]})
+    assert approved.status_code == 200, approved.text
+    job, = client.get("/partners/dusseldorf-heating/connector/jobs").json()
+    assert job["payload"]["property"]["address"] == address
+    assert client.get(HEATFIX_JOBS).json() == []
+
+
+def test_existing_draft_requires_consent_for_updated_recipient(client):
+    case = create_case(client)
+    assert case["partner_id"] == "p_heatfix"
+    path = f"/api/cases/{case['id']}"
+    region = MANAGER_CONTRACTOR | {"name": "HeetsFix", "slug": "dusseldorf-heating", "region": "Dusseldorf"}
+    assert client.post(MANAGER_CONTRACTORS, json=region).status_code == 201
+
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    address = {"acting_resident_id": "c_202", "address": "Aachen Street 1, Berlin"}
+    assert client.patch(profile, json=address).status_code == 200
+    updated = client.get(path).json()
+    assert updated["status"] == "NO_PROVIDER_AVAILABLE"
+    assert "sharing_request" not in updated
+    assert client.post(path + "/sharing-approval", json=CONSENT).status_code == 409
+    assert client.get(HEATFIX_JOBS).json() == []
+
+    assert client.patch(profile, json=address | {"address": "Demo Street 15, Düsseldorf"}).status_code == 200
+    updated = client.get(path).json()
+    assert updated["sharing_request"]["partner"]["name"] == "HeetsFix"
+    assert client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"}).status_code == 409
+    assert client.post(path + "/sharing-approval", json=CONSENT).status_code == 409
+    assert client.get(HEATFIX_JOBS).json() == client.get("/partners/dusseldorf-heating/connector/jobs").json() == []
+
+    approved = client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": updated["partner_id"]})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["partner_id"] == updated["partner_id"]
+    assert client.patch(profile, json=address | {"address": "Demo Street 15, Aachen"}).status_code == 200
+    assert client.get(path).json()["partner_id"] == updated["partner_id"]
+
+
+def test_koln_has_no_contractor_until_a_delivery_provider_is_registered(client):
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    assert client.patch(profile, json={"acting_resident_id": "c_202", "address": "Demo Street 21, 50667 Köln"}).status_code == 200
+
+    case = create_case(client)
+    assert case["status"] == "NO_PROVIDER_AVAILABLE"
+    assert case["partner_id"] is None and "sharing_request" not in case
+
+    # Reproduce a draft that stored the legacy contractor before routing required registration.
+    with closing(connect()) as conn, conn:
+        conn.execute("UPDATE cases SET status='AWAITING_SHARING_APPROVAL',partner_id='p_warmwerk' WHERE id=?",
+                     (case["id"],))
+    url = f"/api/cases/{case['id']}"
+    projected = client.get(url).json()
+    assert projected["status"] == "NO_PROVIDER_AVAILABLE"
+    assert projected["partner_id"] is None and "sharing_request" not in projected
+    assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_warmwerk"}).status_code == 409
+    assert client.get(HEATFIX_JOBS).json() == []
+
+    registered = {"name": "Z Demo Heating Köln", "slug": "cologne-heating", "region": "Koln"}
+    assert client.post(MANAGER_CONTRACTORS, json=registered).status_code == 201
+    assert client.get(url).json()["sharing_request"]["partner"]["name"] == registered["name"]
+    assert create_case(client)["partner_id"] == "p_manager_cologne-heating"

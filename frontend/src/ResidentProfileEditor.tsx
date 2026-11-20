@@ -1,26 +1,27 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { profileChanges } from './api/client'
-import type { Resident, ResidentProfileChanges, ResidentProfileDraft } from './types/domain'
+import type { Resident, ResidentHomeDetails, ResidentProfileChanges, ResidentProfileDraft } from './types/domain'
 
 interface Props {
   resident: Resident
+  homeDetails: ResidentHomeDetails
   saving: boolean
   blocked: boolean
   onSave: (changes: ResidentProfileChanges) => Promise<void>
 }
 
-export function ResidentProfileEditor({ resident, saving, blocked, onSave }: Props) {
+export function ResidentProfileEditor({ resident, homeDetails, saving, blocked, onSave }: Props) {
   const [draft, setDraft] = useState<ResidentProfileDraft | null>(null)
   const [error, setError] = useState('')
   const editButton = useRef<HTMLButtonElement>(null)
   const nameInput = useRef<HTMLInputElement>(null)
-  const changes = draft && profileChanges(resident, draft)
+  const changes = draft && profileChanges({ ...resident, ...homeDetails }, draft)
 
   function open() {
     setError('')
     setDraft({ name: resident.name, email: resident.email ?? '', phone: resident.phone ?? '',
-      preferred_contact: resident.preferred_contact ?? '' })
+      preferred_contact: resident.preferred_contact ?? '', ...homeDetails })
     requestAnimationFrame(() => nameInput.current?.focus())
   }
 
@@ -49,6 +50,11 @@ export function ResidentProfileEditor({ resident, saving, blocked, onSave }: Pro
       <dt>Phone</dt><dd>{resident.phone || 'Not on file'}</dd>
       <dt>Preferred contact</dt><dd>{resident.preferred_contact || 'Not on file'}</dd>
     </dl>
+    <dl className="home-details property-details">
+      <dt>Address</dt><dd>{homeDetails.address}</dd>
+      <dt>Unit</dt><dd>{homeDetails.unit}</dd>
+      <dt>Heating</dt><dd>{homeDetails.heating || 'Not on file'}</dd>
+    </dl>
     <button ref={editButton} type="button" className="secondary edit-profile" disabled={blocked} onClick={open}>
       Edit my details
     </button>
@@ -69,6 +75,12 @@ export function ResidentProfileEditor({ resident, saving, blocked, onSave }: Pro
           <option value={resident.preferred_contact ?? ''} disabled>{resident.preferred_contact || 'Choose a channel'}</option>}
         <option value="portal">Portal</option><option value="email">Email</option>
       </select></label>
+      <label>Address<input autoComplete="street-address" required maxLength={200} value={draft.address}
+        onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label>
+      <label>Unit<input autoComplete="address-line2" required maxLength={80} value={draft.unit}
+        onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label>
+      <label>Heating type<input required={Boolean(homeDetails.heating)} maxLength={120} value={draft.heating}
+        onChange={(event) => setDraft({ ...draft, heating: event.target.value })} /></label>
     </fieldset>
     {error && <p className="error" role="alert">{error}</p>}
     <div className="actions">

@@ -67,6 +67,7 @@ class SharingApprovalIn(BaseModel):
     approved_fields: list[str]
     channel: Channel = "portal_chat"
     approved_by: str  # resident id
+    expected_partner_id: str | None = None  # contractor displayed in the approval preview
 
 
 class PartnerJobRequest(BaseModel):
@@ -118,6 +119,9 @@ class ResidentProfilePatch(TypedDict, total=False):
     phone: Annotated[str, Field(max_length=40, pattern=rf"^\+?{_PHONE_GROUP}(?:[ .-]?{_PHONE_GROUP})*$"),
                      AfterValidator(_validate_phone_length)]
     preferred_contact: Annotated[str, Field(pattern=r"^(portal|email)$")]
+    address: Annotated[str, Field(min_length=1, max_length=200)]
+    unit: Annotated[str, Field(min_length=1, max_length=80)]
+    heating: Annotated[str, Field(min_length=1, max_length=120)]
 
 
 class ResidentProfile(BaseModel):
@@ -128,6 +132,9 @@ class ResidentProfile(BaseModel):
     phone: str | None
     preferred_contact: str | None
     move_in: str | None
+    address: str | None = None
+    unit: str | None = None
+    heating: str | None = None
 
 
 class ResidentSlotChoice(SlotChoice, ResidentAction):

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { api, isFixtureMode } from './api/client'
+import { api, isFixtureMode, residentHomeDetails } from './api/client'
 import { VoiceDraft } from './VoiceDraft'
 import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
@@ -8,10 +8,10 @@ import { ManagerContractors } from './ManagerContractors'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
-import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
-import type { IntakeReview } from './intake'
+import { availabilityPrefix, intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
+import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
-  Contractor, IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerCommand,
+  Contractor, IntakeRequest, MaintenanceCase, PartnerAction, PartnerCommand,
   PartnerInboxJob, RepairInvoiceInput, Resident, ResidentProfileChanges, SharingApprovalRequest, SharingRequest, UnitContext,
 } from './types/domain'
 import './Portal.css'
@@ -62,7 +62,7 @@ function App() {
     if (isFixtureMode) return
     let active = true
     api.listContractors().then(
-      (list) => { if (active) setContractors(list) },
+      (list) => { if (active) { setContractors(list); setContractorLoadFailed(false) } },
       () => { if (active) setContractorLoadFailed(true) },
     )
     return () => { active = false }
@@ -120,15 +120,16 @@ function ResidentPortal({ active }: { active: boolean }) {
 }
 
 function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Resident) {
+  const details = residentHomeDetails(home, resident)
   const values: Record<string, { label: string; value: string }> = {
-    address: { label: 'Address', value: home.property.address },
-    unit: { label: 'Unit', value: home.unit.label },
+    address: { label: 'Address', value: details.address },
+    unit: { label: 'Unit', value: details.unit },
     issue: { label: 'Issue summary', value: [current.description,
       ...current.symptoms, ...current.availability_preferences,
       'Priority: ' + current.urgency].join('\n') },
     name: { label: 'Your name', value: resident.name },
     contact: { label: 'Email and phone', value: [resident.email, resident.phone].filter(Boolean).join(' · ') },
-    heating_type: { label: 'Heating type', value: home.property.heating },
+    heating_type: { label: 'Heating type', value: details.heating },
   }
   const request = current.sharing_request
   if (!request) return []
@@ -141,12 +142,12 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [step, setStep] = useState(0)
   const [issue, setIssue] = useState('')
   const [hotWater, setHotWater] = useState<boolean | null>(null)
-  const [question, setQuestion] = useState<MissingIntakeField | null>(null)
+  const [question, setQuestion] = useState<IntakeFollowUp | null>(null)
   const [followUp, setFollowUp] = useState('')
   const [reviewed, setReviewed] = useState<IntakeReview | null>(null)
   const [safety, setSafety] = useState(false)
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
-  const [selected, setSelected] = useState<string[]>([])
+  const [selected, setSelected] = useState<string[]>(['heating_type'])
   const [approved, setApproved] = useState(false)
   const [dispatch, setDispatch] = useState<{
     fields: ReturnType<typeof sharingFields>
@@ -160,17 +161,34 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submitting = useRef(false)
-  const resolvedQuestions = useRef(new Set<MissingIntakeField>())
+  const resolvedQuestions = useRef(new Set<IntakeFollowUp>())
   const fields = dispatch?.fields ?? (current ? sharingFields(home, current, resident) : [])
+  const isShared = (field: (typeof fields)[number]) => field.required || selected.includes(field.key)
+  const sharedFields = fields.filter(isShared)
   const request = current?.sharing_request ?? (current?.status === 'PARTNER_REQUESTED' ? dispatch?.request : undefined)
   const awaitingConsentReceipt = Boolean(dispatch && !current?.sharing_approval)
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
   const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
 
+  const draftId = !dispatch && current && !current.sharing_approval && step === 2 ? current.id : undefined
+  const draftPartnerId = current?.partner_id
+
+  useEffect(() => {
+    if (!active || !draftId || !resident.address) return
+    let reading = true
+    api.getCase(draftId).then((latest) => {
+      if (reading && !submitting.current) {
+        setCurrent(latest)
+        if (latest.partner_id !== draftPartnerId) setApproved(false)
+      }
+    }).catch(() => { /* The approval endpoint checks the recipient again before sending. */ })
+    return () => { reading = false }
+  }, [active, draftId, draftPartnerId, resident.address])
+
   function applyResident(updated: Resident) {
-    const shared = [...(request?.required_fields ?? []), ...selected]
-    const changedConsent = !dispatch && ((shared.includes('name') && updated.name !== resident.name)
-      || (shared.includes('contact') && (updated.email !== resident.email || updated.phone !== resident.phone)))
+    const updatedFields = current && !dispatch ? sharingFields(home, current, updated).filter(isShared) : sharedFields
+    const changedConsent = updatedFields.length !== sharedFields.length
+      || sharedFields.some((field, index) => field.value !== updatedFields[index]?.value || field.key !== updatedFields[index]?.key)
     setResident(updated)
     if (changedConsent) setApproved(false)
     return changedConsent
@@ -215,13 +233,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         setSafety(true)
         return
       }
-      const next = result?.missing_information.find((field) => {
-        if (resolvedQuestions.current.has(field)) return false
-        if (field === 'hot_water_affected') return true
-        if (field === 'availability_preferences' && result.missing_information.includes('heating_symptom')) return false
-        const prefixLength = field === 'availability_preferences' ? availabilityPrefix.length : 0
-        return input.report.length + prefixLength + 2 <= reportLimit
-      })
+      const next = nextIntakeFollowUp(result, resolvedQuestions.current, input.report.length)
       if (next) {
         setQuestion(next)
         return
@@ -237,8 +249,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   function answerQuestion(answer: string | boolean | null) {
     if (!question || submitting.current) return
     resolvedQuestions.current.add(question)
-    const prefix = question === 'availability_preferences' ? availabilityPrefix : ''
-    const report = typeof answer === 'string' ? `${issue.trim()}\n${prefix}${answer.trim()}` : issue.trim()
+    const report = typeof answer === 'string' ? `${issue.trim()}\n${availabilityPrefix}${answer.trim()}` : issue.trim()
     const hotWaterAnswer = typeof answer === 'boolean' ? answer : hotWater
     setIssue(report)
     setHotWater(hotWaterAnswer)
@@ -290,7 +301,8 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           }
         }
         const attempt = dispatch ?? { fields, request, body: {
-          approved_by: resident.id, channel: 'portal_chat' as const, approved_fields: [...request.required_fields, ...selected],
+          approved_by: resident.id, channel: 'portal_chat' as const, approved_fields: sharedFields.map((field) => field.key),
+          expected_partner_id: request.partner.id,
         } }
         setDispatch(attempt)
         const result = await api.approveSharing(current.id, attempt.body)
@@ -302,6 +314,15 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         const latest = await api.getCase(current.id).catch(() => null)
         if (latest?.partner_job_id || latest?.status === 'NEEDS_HUMAN_REVIEW') {
           setCurrent(latest)
+        } else if (latest && !latest.sharing_approval && latest.partner_id !== current.partner_id) {
+          const context = await api.getUnitContext(home.unit_id).catch(() => null)
+          const updated = context?.residents.find((item) => item.id === resident.id)
+          if (updated) applyResident(updated)
+          setCurrent(latest)
+          setApproved(false)
+          setDispatch(null)
+          setError(latest.sharing_request ? 'The contractor changed. Review and approve sharing again.'
+            : 'No contractor covers the saved repair address.')
         } else {
           if (latest?.sharing_approval) setCurrent(latest)
           setError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
@@ -318,7 +339,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   function reset() {
     setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setFollowUp(''); setSafety(false)
     resolvedQuestions.current.clear()
-    setCurrent(null); setSelected([])
+    setCurrent(null); setSelected(['heating_type'])
     setApproved(false); setDispatch(null); setError(''); setStep(0)
   }
 
@@ -345,11 +366,10 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           </fieldset> : question ? <>
             <label htmlFor="intake-follow-up"><strong>{intakeQuestions[question]}</strong></label>
             <textarea id="intake-follow-up" value={followUp} onChange={(event) => setFollowUp(event.target.value)} rows={3}
-              maxLength={reportLimit - issue.trim().length - 1 - (question === 'availability_preferences' ? availabilityPrefix.length : 0)} disabled={busy} />
+              maxLength={reportLimit - issue.trim().length - 1 - availabilityPrefix.length} disabled={busy} />
             <div className="actions">
               <button disabled={busy || !followUp.trim()}>Continue</button>
-              {question === 'availability_preferences' && <button type="button" className="secondary"
-                onClick={() => answerQuestion(null)}>Skip</button>}
+              <button type="button" className="secondary" onClick={() => answerQuestion(null)}>Skip</button>
             </div>
           </> : <>
             <label htmlFor="report"><strong>What’s happening with your heating?</strong></label>
@@ -433,8 +453,10 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           {error && <p className="error" role="alert">{error}</p>}
           <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
         </form> : <div>
-          <h2 ref={stepHeading} tabIndex={-1}>{current.status === 'NO_PROVIDER_AVAILABLE' ? 'No repair partner available' : 'Report saved for review'}</h2>
-          <p>Case {current.id}. Contractor receipt has not been confirmed.</p>
+          <h2 ref={stepHeading} tabIndex={-1}>{current.status === 'NO_PROVIDER_AVAILABLE' ? 'No contractors are available in this location' : 'Report saved for review'}</h2>
+          <p>{current.status === 'NO_PROVIDER_AVAILABLE'
+            ? 'Your report was saved.'
+            : `Case ${current.id}. Contractor receipt has not been confirmed.`}</p>
           <p>{current.description}</p>
           <CaseTimeline caseId={current.id} />
           <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
@@ -444,21 +466,15 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           <p>Case {current.id} · Job {current.partner_job_id}</p>
           <CaseProgress key={current.id} initial={current} active={active} />
           <div className="actions">
-            {current.partner_id === 'p_heatfix' && <a className="button" href="#inbox">View HeatFix inbox</a>}
             <button className="secondary" disabled={busy} onClick={reset}>Report another issue</button>
           </div>
         </div>}
       </section>
       <aside className="panel">
         <h2>Your home</h2>
-        <ResidentProfileEditor resident={resident} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
+        <ResidentProfileEditor resident={resident} homeDetails={residentHomeDetails(home, resident)} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
           onSave={saveProfile} />
         {awaitingConsentReceipt && !busy && <p className="muted">Retry the handoff to confirm consent before editing your details.</p>}
-        <dl className="home-details property-details">
-          <dt>Address</dt><dd>{home.property.address}</dd>
-          <dt>Unit</dt><dd>{home.unit.label}</dd>
-          <dt>Heating</dt><dd>{home.property.heating}</dd>
-        </dl>
       </aside>
     </div>
   )
@@ -592,7 +608,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
 
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>{caseStatusLabel(job.payload.service_type)}</h3><span className="status" role="status">{caseStatusLabel(job.status)}</span></div>
+      <div className="inbox-heading"><h3 className="case-category">{caseStatusLabel(job.payload.service_type)}</h3>
+        <span className="status" data-status={job.status.toLowerCase()} role="status">{caseStatusLabel(job.status)}</span></div>
       <p>{property.address} · Unit {property.unit}</p>
       <p className="issue-copy">{issue.description}</p>
       {property.heating_type && <p>Heating · {property.heating_type}</p>}
@@ -671,7 +688,7 @@ function ResidentCases() {
   return (
     <section className="inbox" aria-label="Resident cases">
       <div className="inbox-heading">
-        <h2>Heating cases</h2>
+        <h2 className="case-category">Heating cases</h2>
         <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh cases</button>
       </div>
       {home.failed || cases.failed ? <p className="panel error" role="alert">Your cases could not be loaded. Try refreshing.</p>
@@ -686,7 +703,7 @@ function ResidentCase({ item }: { item: MaintenanceCase }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <button className="secondary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         {expanded ? 'Hide case details' : 'View case details'}
@@ -701,7 +718,7 @@ function ManagerCase({ item }: { item: MaintenanceCase }) {
   const contractor = item.sharing_request?.partner.name ?? (item.partner_id === 'p_heatfix' ? 'HeatFix Aachen GmbH' : item.partner_id)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status">{caseStatusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <dl className="home-details">
         <dt>Contractor</dt><dd>{contractor ?? 'Unassigned'}</dd>
