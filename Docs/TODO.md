@@ -134,7 +134,7 @@ Backend work is underway on `backend/P1` while C finishes P0 intake and live n8n
 - [ ] A: show the shared repair and appointment on both unit screens. Rehearse two reports and one HeatFix inbox entry on the demo stack.
 - [ ] C: deliver the simulated text-message outbox and one-click slot confirmation on the same case. Use the case timeline for building updates and the dispatch case for slot selection.
 - [x] B: hold invoices above €3,000 for manager approval and audit the approval. Exactly €3,000 closes automatically.
-- [ ] A: wire the manager approval control to `POST /api/cases/{id}/approve-invoice` and rehearse €3,000.01.
+- [ ] A: label the existing post-completion manager invoice action accurately when wiring `POST /api/cases/{id}/approve-invoice`. Rehearse €3,000.01.
 - [x] B: register a simulated internet provider through a capabilities manifest and document the move-in → offer → contract design.
 - [x] B: handle partner rejection or unavailability with human escalation.
 - [x] B: include the approved previous repair's case ID and date as source attribution.
@@ -142,6 +142,12 @@ Backend work is underway on `backend/P1` while C finishes P0 intake and live n8n
 - [ ] Include relevant caretaker or access information; never share a key-safe code automatically.
 - [ ] Preserve a complete portal fallback when n8n, OpenAI or network access fails.
 - [ ] Support an optional repair photo; AI may describe it but may not diagnose the fault.
+
+## Organizer follow-ups outside the typed P0 checkpoint
+
+- [ ] Model the spending limit from the owner–manager agreement and record advance owner authorization for above-limit work. The current high-invoice manager action happens after completion. Allow the owner to compare quotes when the agreement or circumstances call for them.
+- [ ] Define which resident and property fields each role can edit before adding profile editing. Login is outside the prototype.
+- [ ] Give the manager a follow-up flag for a received job with no partner response. The organizer specified no response deadline. Existing uncertain-dispatch retries reuse the original key.
 
 ## P2 - Optional; skip if the demo is at risk
 
