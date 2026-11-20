@@ -9,24 +9,24 @@ async function loadPortal(t, baseUrl = '') {
     define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify(baseUrl) },
   })
   t.after(() => server.close())
-  const { api, profileChanges } = await server.ssrLoadModule('/src/api/client.ts')
+  const { api, profileChanges, residentHomeDetails } = await server.ssrLoadModule('/src/api/client.ts')
   const fixtures = await server.ssrLoadModule('/src/api/fixtures.ts')
-  return { api, profileChanges, ...fixtures }
+  return { api, profileChanges, residentHomeDetails, ...fixtures }
 }
 
 test('saving a draft sends just the displayed actor and trimmed edits, and uses the API response', async (t) => {
   const { api, profileChanges, unitContextFixture } = await loadPortal(t, 'http://centrix.test')
   const resident = unitContextFixture.residents[0]
-  const updated = { ...resident, phone: '+49 151 00000001' }
+  const updated = { ...resident, phone: '+49 151 00000001', unit: '4B rear entrance' }
   assert.deepEqual(profileChanges(resident, { ...resident, name: ' ' + resident.name }), {})
   assert.deepEqual(profileChanges({ ...resident, phone: null }, { ...resident, phone: '' }), {})
   assert.deepEqual(profileChanges(resident, { ...resident, preferred_contact: 'phone' }), { preferred_contact: 'phone' })
   assert.deepEqual(profileChanges(resident, { ...resident, preferred_contact: 'sms' }), {})
-  const changes = profileChanges(resident, { ...resident, phone: ' ' + updated.phone + ' ' })
+  const changes = profileChanges(resident, { ...resident, phone: ' ' + updated.phone + ' ', unit: updated.unit })
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'http://centrix.test/api/units/unit_4b/residents/c_202/profile')
     assert.equal(init.method, 'PATCH')
-    assert.deepEqual(JSON.parse(init.body), { acting_resident_id: resident.id, phone: updated.phone })
+    assert.deepEqual(JSON.parse(init.body), { acting_resident_id: resident.id, phone: updated.phone, unit: updated.unit })
     return Response.json(updated)
   })
   assert.deepEqual(await api.updateResidentProfile(resident.unit_id, resident.id, changes), updated)
@@ -37,7 +37,7 @@ test('saving a draft sends just the displayed actor and trimmed edits, and uses 
 })
 
 test('fixture context and new consent share one resident while earlier jobs keep the approved values', async (t) => {
-  const { api, createCaseFixture, unitContextFixture } = await loadPortal(t)
+  const { api, createCaseFixture, unitContextFixture, residentHomeDetails } = await loadPortal(t)
   const previousWindow = globalThis.window
   globalThis.window = { setTimeout: (callback) => setTimeout(callback, 0) }
   t.after(() => {
@@ -53,7 +53,8 @@ test('fixture context and new consent share one resident while earlier jobs keep
   await approve(initial, ['contact'])
   const [originalJob] = await api.listPartnerJobs('heatfix')
   const originalEvents = await api.getCaseEvents(initial.id)
-  const changes = { name: 'Lena Beispiel', phone: '+49 151 00000002', preferred_contact: 'email' }
+  const changes = { name: 'Lena Beispiel', phone: '+49 151 00000002', preferred_contact: 'email',
+    address: 'Demo address 15, Aachen', unit: '4B rear entrance', heating: 'Heat pump' }
   assert.deepEqual(await edit(changes), { ...resident, ...changes })
   assert.deepEqual((await api.getUnitContext(resident.unit_id)).residents[0], { ...resident, ...changes })
   assert.deepEqual(unitContextFixture.residents[0], resident)
@@ -62,8 +63,29 @@ test('fixture context and new consent share one resident while earlier jobs keep
   assert.deepEqual(await api.getCaseEvents(initial.id), originalEvents)
   assert.equal((await api.listUnitCases(resident.unit_id)).length, 1)
   const next = await api.createCase(createCaseFixture)
-  await approve(next, ['contact'])
+  await approve(next, ['contact', 'heating_type'])
   const [newJob, oldJob] = await api.listPartnerJobs('heatfix')
   assert.deepEqual(newJob.payload.resident, { contact: { email: resident.email, phone: changes.phone } })
   assert.deepEqual(oldJob, originalJob)
+  assert.deepEqual(residentHomeDetails(unitContextFixture, resident), {
+    address: unitContextFixture.property.address, unit: unitContextFixture.unit.label, heating: unitContextFixture.property.heating,
+  })
+  assert.deepEqual(newJob.payload.property, { address: changes.address, unit: changes.unit, heating_type: changes.heating })
+  const [group] = await api.listManagerRepairs()
+  assert.equal(group.contractor.name, 'HeatFix Aachen GmbH')
+  assert.deepEqual(group.repairs.map((repair) => [repair.case.id, repair.address, repair.unit]), [
+    [next.id, changes.address, changes.unit],
+    [initial.id, originalJob.payload.property.address, originalJob.payload.property.unit],
+  ])
+})
+
+test('an intake result without extracted heating symptoms proceeds to the editable summary', async (t) => {
+  const server = await createServer({
+    configFile: false, envDir: false, logLevel: 'error', appType: 'custom',
+    server: { middlewareMode: true, hmr: false, watch: null, ws: false },
+  })
+  t.after(() => server.close())
+  const { nextIntakeFollowUp } = await server.ssrLoadModule('/src/intake.ts')
+  assert.equal(nextIntakeFollowUp({ missing_information: ['heating_symptom', 'availability_preferences'] }, new Set(), 42), undefined)
+  assert.equal(nextIntakeFollowUp({ missing_information: ['hot_water_affected'] }, new Set(), 42), 'hot_water_affected')
 })

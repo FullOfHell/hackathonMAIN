@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { timelineEventLabel } from '../src/caseDisplay.ts'
 import {
   contractorInboxHref, contractorInboxSlug, contractorNotifications, residentNotifications,
 } from '../src/repairNotifications.ts'
@@ -37,4 +38,13 @@ test('resident notifications are limited to the contractor accepting, declining 
     ['event:case_1:5', 'Repair request declined'],
     ['event:case_1:4', 'Repair request accepted'],
   ])
+})
+
+test('the timeline shows permission and repair milestones and omits internal handoff states', () => {
+  const state = (to) => ({ type: 'case.status_changed', payload: { to } })
+  for (const hidden of ['TRIAGED', 'AWAITING_SHARING_APPROVAL', 'PARTNER_REQUESTED']) {
+    assert.equal(timelineEventLabel(state(hidden)), undefined)
+  }
+  assert.equal(timelineEventLabel({ type: 'sharing.approved' }), 'Tenant gave permission to send repair details')
+  assert.equal(timelineEventLabel(state('SLOTS_OFFERED')), 'Contractor offered appointment times')
 })

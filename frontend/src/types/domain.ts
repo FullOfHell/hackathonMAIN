@@ -40,7 +40,13 @@ export interface IntakeResponse {
   result: IntakeResult
 }
 
-export interface Resident {
+export interface ResidentHomeDetails {
+  address: string
+  unit: string
+  heating: string
+}
+
+export interface Resident extends Partial<ResidentHomeDetails> {
   id: string
   unit_id: string
   name: string
@@ -52,7 +58,7 @@ export interface Resident {
 
 export type ContactChannel = 'portal' | 'email' | 'phone'
 
-export type ResidentProfileChanges = Partial<{
+export type ResidentProfileChanges = Partial<ResidentHomeDetails & {
   name: string
   email: string
   phone: string
@@ -96,6 +102,7 @@ export interface SharingApprovalRequest {
   approved_fields: string[]
   channel: Channel
   approved_by: string
+  expected_partner_id?: string
 }
 
 export interface SharingApproval {
@@ -170,6 +177,17 @@ export interface MaintenanceCase extends CreateCaseRequest {
   updated_at: string
   sharing_approval: SharingApproval | null
   sharing_request?: SharingRequest
+}
+
+export interface ManagerRepair {
+  case: MaintenanceCase
+  address: string
+  unit: string
+}
+
+export interface ManagerRepairGroup {
+  contractor: { id: string; name: string } | null
+  repairs: ManagerRepair[]
 }
 
 export interface CaseEvent {

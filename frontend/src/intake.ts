@@ -7,10 +7,20 @@ export const safetyMessage = safety.message
 const gasSignal = new RegExp(safety.possible_gas_leak, 'gi')
 const gasNegation = new RegExp(safety.negation_prefix, 'i')
 
-export const intakeQuestions: Record<MissingIntakeField, string> = {
-  heating_symptom: 'What is happening with your heating?',
+export type IntakeFollowUp = Exclude<MissingIntakeField, 'heating_symptom'>
+
+export const intakeQuestions: Record<IntakeFollowUp, string> = {
   hot_water_affected: 'Is hot water also affected?',
   availability_preferences: 'When are you usually home for a repair visit?',
+}
+
+export function nextIntakeFollowUp(result: IntakeResult | undefined, resolved: Set<IntakeFollowUp>, reportLength: number) {
+  return result?.missing_information.find((field): field is IntakeFollowUp => {
+    if (field === 'heating_symptom' || resolved.has(field)) return false
+    if (field === 'hot_water_affected') return true
+    return !result.missing_information.includes('heating_symptom')
+      && reportLength + availabilityPrefix.length + 2 <= reportLimit
+  })
 }
 
 export interface IntakeReview {

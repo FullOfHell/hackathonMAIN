@@ -1,17 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, invoiceUrl } from './api/client'
-import { caseStatusLabel, formatTime, slotLabel } from './caseDisplay'
+import { caseStatusLabel, formatTime, slotLabel, timelineEventLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
-
-const eventLabels: Record<string, string> = {
-  'maintenance.case_created': 'Report saved',
-  'sharing.approved': 'Sharing approved',
-  'partner.job_requested': 'Job received by contractor',
-  'partner.accepted': 'Job accepted by contractor',
-  'partner.booking_unconfirmed': 'Booking confirmation pending',
-  'seed.historical_case': 'Historical repair case',
-}
 
 export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revision?: number }) {
   const [events, setEvents] = useState<CaseEvent[]>()
@@ -25,16 +16,20 @@ export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revisio
     )
     return () => { active = false }
   }, [caseId, revision, attempt])
+  const milestones = events?.flatMap((event) => {
+    const label = timelineEventLabel(event)
+    return label ? [{ ...event, label }] : []
+  })
   return (
     <section aria-label="Case timeline">
       <h3>Case timeline</h3>
       {failed && <p role="alert">Timeline unavailable. <button className="secondary chip"
         onClick={() => { setFailed(false); setAttempt((value) => value + 1) }}>Retry timeline</button></p>}
-      {events ? events.length ? <ol className="timeline">{events.map((event) =>
+      {milestones ? milestones.length ? <ol className="timeline">{milestones.map((event) =>
         <li key={event.id}>
-          {eventLabels[event.type] ?? caseStatusLabel(String(event.payload.to ?? event.type))}
+          {event.label}
           <time dateTime={event.timestamp}>{formatTime(event.timestamp)}</time>
-        </li>)}</ol> : <p>No case events yet.</p> : !failed && <p role="status">Loading case timeline…</p>}
+        </li>)}</ol> : <p>No updates yet.</p> : !failed && <p role="status">Loading case timeline…</p>}
     </section>
   )
 }

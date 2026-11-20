@@ -9,7 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import connect
+from app.db import connect, init_db
 from app.integrations.connector import get_partner_client
 from app.states import ALLOWED_TRANSITIONS, CaseStatus, InvalidTransition, check_transition
 
@@ -39,7 +39,24 @@ def test_shared_unit_context_fixture_matches_api(client):
     assert client.get("/api/units/unit_4b/context").json() == load("unit-context.json")
 
 
-@pytest.mark.parametrize("change", [{"phone": "+49 151 00000001"}, {"preferred_contact": "email"}])
+def test_existing_database_adds_home_details_without_rewriting_resident(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.db"
+    monkeypatch.setenv("DATABASE_PATH", str(path))
+    with closing(sqlite3.connect(path)) as legacy, legacy:
+        legacy.execute("CREATE TABLE residents (id TEXT PRIMARY KEY, unit_id TEXT NOT NULL, name TEXT NOT NULL, "
+                       "email TEXT, phone TEXT, preferred_contact TEXT, move_in TEXT)")
+        legacy.execute("INSERT INTO residents (id,unit_id,name) VALUES ('c_demo','unit_demo','Demo Resident')")
+    init_db(seed=False)
+    with closing(connect()) as upgraded:
+        resident = upgraded.execute("SELECT * FROM residents WHERE id='c_demo'").fetchone()
+        assert resident["unit_id"] == "unit_demo" and resident["name"] == "Demo Resident"
+        assert all(resident[field] is None for field in ("address", "unit", "heating"))
+
+
+@pytest.mark.parametrize("change", [
+    {"phone": "+49 151 00000001"}, {"preferred_contact": "email"},
+    {"address": "Demo address 15, Aachen", "unit": "4B, rear entrance", "heating": "Heat pump"},
+])
 def test_profile_patch_preserves_omitted_fields_on_retry_and_restart(client, change):
     context = load("unit-context.json")
     expected = context["residents"][0] | change
@@ -81,6 +98,7 @@ def test_concurrent_partial_saves_preserve_both_edits_for_second_resident(client
     ACTOR | {"phone": None}, ACTOR | {"phone": 4915100000001},
     ACTOR | {"phone": "call 0000000"}, ACTOR | {"phone": "+49"},
     ACTOR | {"email": "missing-at.example.com"}, ACTOR | {"email": "a@b..example"},
+    ACTOR | {"address": " "}, ACTOR | {"unit": " "}, ACTOR | {"heating": " "},
 ])
 def test_invalid_profile_patch_returns_422_without_saving(client, body):
     assert client.patch(PROFILE_URL, json=body).status_code == 422
@@ -88,7 +106,7 @@ def test_invalid_profile_patch_returns_422_without_saving(client, body):
 
 
 @pytest.mark.parametrize("field", [
-    "id", "resident_id", "unit_id", "address", "heating", "heating_type", "move_in", "access_details", "unknown",
+    "id", "resident_id", "unit_id", "heating_type", "move_in", "access_details", "unknown",
 ])
 def test_read_only_or_unexpected_field_rejects_entire_patch(client, field):
     response = client.patch(PROFILE_URL, json=ACTOR | {"name": "Changed", field: "forbidden"})
@@ -129,6 +147,29 @@ def test_approval_shares_only_selected_updated_profile_fields(client, optional_f
     job, = client.get("/partners/heatfix/connector/jobs").json()
     expected = {"name": profile["name"], "contact": contact}
     assert job["payload"]["resident"] == {key: expected[key] for key in optional_fields}
+
+
+@pytest.mark.parametrize("include_heating", [True, False])
+def test_home_edits_are_used_only_for_new_approved_orders(client, include_heating):
+    case = create_case(client)
+    updated = {"address": "Demo address 15, Aachen", "unit": "4B, rear entrance", "heating": "Heat pump"}
+    assert client.patch(PROFILE_URL, json=ACTOR | updated).status_code == 200
+    assert client.get(UNIT_URL + "/context").json()["property"] == load("unit-context.json")["property"]
+    assert client.get(UNIT_URL + "/context").json()["unit"] == load("unit-context.json")["unit"]
+    url = f"/api/cases/{case['id']}/sharing-approval"
+    fields = ["address", "unit", "issue"] + (["heating_type"] if include_heating else [])
+    response = client.post(url, json={"approved_by": ACTOR["acting_resident_id"], "approved_fields": fields})
+    assert response.status_code == 200, response.text
+    assert response.json()["unit_id"] == case["unit_id"]
+    job, = client.get("/partners/heatfix/connector/jobs").json()
+    expected = {"address": updated["address"], "unit": updated["unit"]}
+    if include_heating:
+        expected["heating_type"] = updated["heating"]
+    assert job["payload"]["property"] == expected
+
+    assert client.patch(PROFILE_URL, json=ACTOR | {"unit": "Later change"}).status_code == 200
+    assert client.post(url, json={"approved_by": ACTOR["acting_resident_id"], "approved_fields": fields}).status_code == 200
+    assert client.get("/partners/heatfix/connector/jobs").json() == [job]
 
 
 def test_case_created_and_awaits_approval(client):
