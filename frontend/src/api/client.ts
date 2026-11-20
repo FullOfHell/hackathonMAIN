@@ -3,6 +3,8 @@ import { defaultContractorSlug } from '../repairNotifications'
 import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
 import type {
   CaseEvent,
+  Contractor,
+  ContractorInput,
   CreateCaseRequest,
   IntakeRequest,
   IntakeResponse,
@@ -170,6 +172,12 @@ export const api = {
           body: JSON.stringify(body),
         })
       : approveDemoCase(caseId, body),
+
+  listContractors: (): Promise<Contractor[]> => request('/api/manager/contractors'),
+
+  addContractor: (body: ContractorInput): Promise<Contractor> => request('/api/manager/contractors', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
 
   listPartnerJobs: (partnerSlug: string): Promise<PartnerInboxJob[]> =>
     apiBaseUrl ? request(partnerJobsPath(partnerSlug))

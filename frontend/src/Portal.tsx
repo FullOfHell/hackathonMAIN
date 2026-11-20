@@ -4,13 +4,14 @@ import { api, isFixtureMode } from './api/client'
 import { VoiceDraft } from './VoiceDraft'
 import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
+import { ManagerContractors } from './ManagerContractors'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeReview } from './intake'
 import type {
-  IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerCommand,
+  Contractor, IntakeRequest, MaintenanceCase, MissingIntakeField, PartnerAction, PartnerCommand,
   PartnerInboxJob, RepairInvoiceInput, Resident, ResidentProfileChanges, SharingApprovalRequest, SharingRequest, UnitContext,
 } from './types/domain'
 import './Portal.css'
@@ -40,6 +41,7 @@ function useLoad<T>(load: () => Promise<T>) {
 const unitId = 'unit_4b'
 const loadHome = () => api.getUnitContext(unitId)
 const loadUnitCases = () => api.listUnitCases(unitId)
+const defaultInbox = { slug: defaultContractorSlug, name: 'HeatFix Aachen' }
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
   '#manager': 'Property manager',
@@ -49,8 +51,22 @@ function App() {
   const [hash, setHash] = useState(() => location.hash)
   const partnerSlug = contractorInboxSlug(hash)
   const view = partnerSlug ? '#inbox' : (hash === '#cases' || hash === '#manager' ? hash : '#report')
-  const otherPartner = partnerSlug && partnerSlug !== defaultContractorSlug
-  const inboxLabel = otherPartner ? 'Contractor inbox' : 'HeatFix inbox'
+  const [contractors, setContractors] = useState<Contractor[]>()
+  const [contractorLoadFailed, setContractorLoadFailed] = useState(false)
+  const inboxes = contractors ?? [defaultInbox]
+  const inbox = inboxes.find((contractor) => contractor.slug === partnerSlug)
+  const inboxTitle = partnerSlug === defaultContractorSlug ? 'HeatFix Aachen inbox'
+    : inbox ? inbox.name + ' inbox' : 'Contractor inbox'
+
+  useEffect(() => {
+    if (isFixtureMode) return
+    let active = true
+    api.listContractors().then(
+      (list) => { if (active) setContractors(list) },
+      () => { if (active) setContractorLoadFailed(true) },
+    )
+    return () => { active = false }
+  }, [])
   useEffect(() => {
     const navigate = () => setHash(location.hash)
     window.addEventListener('hashchange', navigate)
@@ -65,20 +81,28 @@ function App() {
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
               <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
-              <a href={contractorInboxHref(partnerSlug ?? defaultContractorSlug)}
-                aria-current={view === '#inbox' ? 'page' : undefined}>{inboxLabel}</a>
+              <span className="contractor-inbox-picker">
+                <span aria-hidden="true">{inbox?.name ?? 'Contractors'}</span>
+                <select className="contractor-inbox-select" aria-label="Contractor inbox" title="Choose a contractor inbox"
+                  value={inbox?.slug ?? ''}
+                  onChange={(event) => { location.hash = contractorInboxHref(event.target.value) }}>
+                  <option value="" disabled>Contractor inbox</option>
+                  {inboxes.map(({ slug, name }) => <option key={slug} value={slug}>{name}</option>)}
+                </select>
+              </span>
               <a href="#manager" aria-current={view === '#manager' ? 'page' : undefined}>Manager</a>
             </div>
             {view !== '#manager' && <NotificationBell key={partnerSlug ? 'contractor:' + partnerSlug : 'resident'} partnerSlug={partnerSlug} unitId={unitId} />}
           </nav>
-          <h1>{view === '#inbox' ? (otherPartner ? inboxLabel + ' · ' + partnerSlug : 'HeatFix Aachen inbox') : views[view]}</h1>
+          <h1>{view === '#inbox' ? inboxTitle : views[view]}</h1>
         </div>
       </header>
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
         {view === '#cases' && <ResidentCases />}
         {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
-        {view === '#manager' && <Manager />}
+        {view === '#manager' && <Manager contractors={contractors} loadError={contractorLoadFailed}
+          onAdded={(contractor) => setContractors((list) => [...(list ?? []), contractor])} />}
       </main>
       <footer>{isFixtureMode ? 'Fixture mode. Reports are simulated and reset on reload.' : 'Hackathon demo using fictional properties and a simulated contractor.'}</footer>
     </>
@@ -612,22 +636,29 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   )
 }
 
-function Manager() {
+function Manager(props: {
+  contractors: Contractor[] | undefined
+  loadError: boolean
+  onAdded: (contractor: Contractor) => void
+}) {
   const home = useLoad(loadHome)
   const cases = useLoad(loadUnitCases)
   return (
-    <section className="inbox" aria-label="Unit cases">
-      <div className="inbox-heading">
-        <div><h2>{home.data ? 'Unit ' + home.data.unit.label : 'Unit cases'}</h2>
-          {home.data && <p>{home.data.property.address}</p>}
-          {home.failed && <p role="alert">Unit details unavailable.</p>}</div>
-        <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh unit</button>
-      </div>
-      {cases.failed ? <p className="panel error" role="alert">Cases could not be loaded. Try refreshing.</p>
-        : !cases.data ? <p className="panel" role="status">Loading cases…</p>
-          : !cases.data.length ? <p className="panel">No cases for this unit yet.</p>
-            : cases.data.map((item) => <ManagerCase key={item.id} item={item} />)}
-    </section>
+    <div>
+      <ManagerContractors {...props} region={home.data?.property.region ?? ''} />
+      <section className="inbox" aria-label="Unit cases">
+        <div className="inbox-heading">
+          <div><h2>{home.data ? 'Unit ' + home.data.unit.label : 'Unit cases'}</h2>
+            {home.data && <p>{home.data.property.address}</p>}
+            {home.failed && <p role="alert">Unit details unavailable.</p>}</div>
+          <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh unit</button>
+        </div>
+        {cases.failed ? <p className="panel error" role="alert">Cases could not be loaded. Try refreshing.</p>
+          : !cases.data ? <p className="panel" role="status">Loading cases…</p>
+            : !cases.data.length ? <p className="panel">No cases for this unit yet.</p>
+              : cases.data.map((item) => <ManagerCase key={item.id} item={item} />)}
+      </section>
+    </div>
   )
 }
 

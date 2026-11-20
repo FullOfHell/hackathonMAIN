@@ -130,9 +130,15 @@ def _trusted_callback_url(job):
     except httpx.InvalidURL as exc:
         raise HTTPException(422, "invalid callback URL") from exc
     trusted = httpx.URL(callback_url())
-    if (url.scheme, url.host, url.port) != (trusted.scheme, trusted.host, trusted.port) or url.userinfo:
-        raise HTTPException(422, "callback URL must use the configured centrix origin")
-    return url
+    if not url.userinfo:
+        if (url.scheme, url.host, url.port) == (trusted.scheme, trusted.host, trusted.port):
+            return url
+        # Older demo jobs may use the other loopback name for the same local server.
+        if (url.scheme == trusted.scheme == "http"
+                and {url.host, trusted.host} == {"localhost", "127.0.0.1"}
+                and url.port == trusted.port and url.raw_path == trusted.raw_path and not url.fragment):
+            return trusted
+    raise HTTPException(422, "callback URL must use the configured centrix origin")
 
 
 def _send_event(conn, client, job_id: str, partner: dict, event_type: str, data: dict | None = None):

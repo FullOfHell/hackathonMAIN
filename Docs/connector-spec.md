@@ -70,7 +70,13 @@ Linked timelines persist `building.repair_updated` on status changes. Shared clo
 | Partner declines or cannot finish | Use `/reject` on a pending job, or `POST /partners/heatfix/connector/jobs/{job_id}/fail` with a `reason` while the job is active. The case records `DECLINED` or `FAILED`, respectively. |
 | Manager takes ownership | `POST /api/cases/{case_id}/escalate`, empty body, moves a `DECLINED`, `FAILED` or `NO_PROVIDER_AVAILABLE` case to `NEEDS_HUMAN_REVIEW`. Repeating the action returns the same case. Other states return 409. |
 
+For saved local demo jobs, HTTP callback URLs on `localhost` and `127.0.0.1` can share the configured callback destination when the port and callback path match. The simulator sends the callback to the configured Centrix URL.
+
 ## Adding a delivery provider
+
+In the portal, open **Manager → Contractors → Add contractor** to register a simulated heating contractor without restarting FastAPI. Enter the company name, exact service region and a unique inbox slug. The saved contractor appears in the list with an **Open inbox** link. New cases use the usual service and region match, with the name as a tie-break.
+
+The demo manager API lists active local delivery providers at `GET /api/manager/contractors`. `POST /api/manager/contractors` accepts `name`, `region` and `slug`, and returns 201 with `name`, `regions` and `slug`. The slug uses lowercase letters, digits and hyphen separators. A slug already in use returns 409. The portal form generates a local connector route and uses the built-in heating simulator.
 
 Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
 
