@@ -10,6 +10,8 @@ def client(tmp_path, monkeypatch):
     from app.partners.heatfix import get_callback_client
 
     monkeypatch.setenv("N8N_CASE_WEBHOOK_URL", "")
+    monkeypatch.setenv("N8N_CONNECTOR_WEBHOOK_URL", "")
+    monkeypatch.setenv("CONNECTOR_DISPATCH_SECRET", "")
     monkeypatch.setenv("PARTNER_WEBHOOK_SECRET", "test-only-partner-secret")
     monkeypatch.setenv("PUBLIC_BACKEND_URL", "http://testserver")
     with TestClient(app) as c:

@@ -59,7 +59,8 @@ def select_partner(conn: sqlite3.Connection, service_type: str, region: str) -> 
     """Deterministic routing (plan §6C): service type -> region -> active; tie-break by name."""
     eligible = []
     for p in conn.execute("SELECT p.* FROM partners p LEFT JOIN partner_capabilities k ON k.partner_id=p.id "
-                          "WHERE p.active=1 AND (k.manifest IS NULL OR json_extract(k.manifest,'$.kind')='delivery') "
+                          "WHERE p.active=1 AND (k.manifest IS NULL OR (json_extract(k.manifest,'$.kind')='delivery' "
+                          "AND 'maintenance.case_created' IN (SELECT value FROM json_each(k.manifest,'$.triggers')))) "
                           "ORDER BY p.name,p.id"):
         if service_type in json.loads(p["service_types"]) and region in json.loads(p["regions"]):
             eligible.append(dict(p))

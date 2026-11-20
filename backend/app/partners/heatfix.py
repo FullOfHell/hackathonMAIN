@@ -1,18 +1,18 @@
-"""Simulated heating contractor 'HeatFix Aachen GmbH'. Stands in for an external partner system.
-It implements the partner side of connector v1; it must not touch centrix case tables directly."""
+"""Simulated delivery partners implementing connector v1 on their own job records."""
 import json
 import uuid
 from datetime import datetime, time, timedelta, timezone
+from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
+from app.partners.registry import local_capabilities
 from app.schemas import BuildingJobScope, FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
 
-PARTNER_ID = "p_heatfix"
-router = APIRouter(prefix="/partners/heatfix", tags=["mock partner: HeatFix"])
+router = APIRouter(prefix="/partners/{slug}", tags=["simulated delivery partners"])
 
 ALLOWED_JOB_ACTIONS = {
     "accepted": {"received"},
@@ -25,26 +25,29 @@ ALLOWED_JOB_ACTIONS = {
 }
 
 
-@router.get("/connector/capabilities")
-def capabilities(conn=Depends(get_db)):
-    row = conn.execute("SELECT manifest FROM partner_capabilities WHERE partner_id=?", (PARTNER_ID,)).fetchone()
-    manifest = json.loads(row["manifest"])
-    return {**manifest, "service_types": manifest["categories"]}
+def delivery_partner(slug: str, conn=Depends(get_db)) -> dict:
+    manifest = local_capabilities(conn, slug)
+    if manifest["kind"] != "delivery":
+        raise HTTPException(404, "partner does not provide delivery jobs")
+    return manifest
+
+
+DeliveryPartner = Annotated[dict, Depends(delivery_partner)]
 
 
 @router.post("/connector/jobs", status_code=201)
-def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db)):
-    if job.service_type != "heating_repair":
+def create_job(job: PartnerJobRequest, response: Response, partner: DeliveryPartner, conn=Depends(get_db)):
+    if job.service_type not in partner["categories"]:
         raise HTTPException(422, "unsupported service_type")
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     inserted = conn.execute("INSERT INTO partner_jobs VALUES (?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
-                            (job_id, PARTNER_ID, job.idempotency_key, job.request_id, job.model_dump_json(),
+                            (job_id, partner["partner_id"], job.idempotency_key, job.request_id, job.model_dump_json(),
                              "received", now_iso()))
     if not inserted.rowcount:
-        existing = conn.execute("SELECT id, status, request_id FROM partner_jobs WHERE idempotency_key=?",
+        existing = conn.execute("SELECT id, status, request_id, partner_id FROM partner_jobs WHERE idempotency_key=?",
                                 (job.idempotency_key,)).fetchone()
-        if existing["request_id"] != job.request_id:
-            raise HTTPException(409, "idempotency key already belongs to a different case")
+        if existing["request_id"] != job.request_id or existing["partner_id"] != partner["partner_id"]:
+            raise HTTPException(409, "idempotency key already belongs to a different case or provider")
         conn.commit()
         response.status_code = 200
         return {"job_id": existing["id"], "status": existing["status"], "duplicate": True}
@@ -53,16 +56,18 @@ def create_job(job: PartnerJobRequest, response: Response, conn=Depends(get_db))
 
 
 @router.get("/connector/jobs")
-def list_jobs(conn=Depends(get_db)):
+def list_jobs(partner: DeliveryPartner, conn=Depends(get_db)):
     return [{**dict(j), "payload": json.loads(j["payload"])}
-            for j in conn.execute("SELECT * FROM partner_jobs WHERE partner_id=? ORDER BY received_at DESC", (PARTNER_ID,))]
+            for j in conn.execute("SELECT * FROM partner_jobs WHERE partner_id=? ORDER BY received_at DESC", (partner["partner_id"],))]
 
 
 @router.put("/connector/jobs/{job_id}/scope")
-def set_building_scope(job_id: str, body: BuildingJobScope, conn=Depends(get_db)):
+def set_building_scope(job_id: str, body: BuildingJobScope, partner: DeliveryPartner, conn=Depends(get_db)):
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        job = get_job(job_id, conn)
+        job = get_job(job_id, partner, conn)
+        if job["payload"]["service_type"] != "heating_repair":
+            raise HTTPException(422, "building scope applies to heating repairs")
         if body.request_id != job["request_id"]:
             raise HTTPException(409, "scope update does not match the original request")
         if job["payload"]["issue"].get("repair_scope") == body.scope:
@@ -75,12 +80,12 @@ def set_building_scope(job_id: str, body: BuildingJobScope, conn=Depends(get_db)
 
 
 @router.get("/connector/jobs/{job_id}")
-def get_job(job_id: str, conn=Depends(get_db)):
+def get_job(job_id: str, partner: DeliveryPartner, conn=Depends(get_db)):
     row = conn.execute(
         "SELECT j.*,o.payload AS offer,b.slot_id AS booked_slot_id FROM partner_jobs j "
         "LEFT JOIN heatfix_callbacks o ON o.job_id=j.id AND o.type='slots_offered' "
         "LEFT JOIN heatfix_bookings b ON b.job_id=j.id WHERE j.id=? AND j.partner_id=?",
-        (job_id, PARTNER_ID)).fetchone()
+        (job_id, partner["partner_id"])).fetchone()
     if not row:
         raise HTTPException(404, "job not found")
     job = dict(row)
@@ -105,10 +110,12 @@ def _demo_slots(job_id: str) -> list[dict]:
     return slots
 
 
-def _send_event(conn, client, job_id: str, event_type: str, data: dict | None = None):
+def _send_event(conn, client, job_id: str, partner: dict, event_type: str, data: dict | None = None):
+    if event_type not in partner["events"]:
+        raise HTTPException(422, "unsupported partner event")
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        job = get_job(job_id, conn)
+        job = get_job(job_id, partner, conn)
         try:
             url = httpx.URL(job["payload"]["callback_url"])
         except httpx.InvalidURL as exc:
@@ -149,34 +156,34 @@ def _send_event(conn, client, job_id: str, event_type: str, data: dict | None = 
         raise HTTPException(502, "retry this action because centrix did not acknowledge the callback") from exc
     with conn:
         conn.execute("UPDATE heatfix_callbacks SET delivered=1 WHERE job_id=? AND type=?", (job_id, event_type))
-    return get_job(job_id, conn)
+    return get_job(job_id, partner, conn)
 
 
 @router.post("/connector/jobs/{job_id}/accept")
-def accept(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "accepted")
+def accept(job_id: str, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "accepted")
 
 
 @router.post("/connector/jobs/{job_id}/reject")
-def reject(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "rejected")
+def reject(job_id: str, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "rejected")
 
 
 @router.post("/connector/jobs/{job_id}/fail")
-def fail_job(job_id: str, body: FailureReason, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "failed", body.model_dump())
+def fail_job(job_id: str, body: FailureReason, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "failed", body.model_dump())
 
 
 @router.post("/connector/jobs/{job_id}/offer-slots")
-def offer_slots(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "slots_offered")
+def offer_slots(job_id: str, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "slots_offered")
 
 
 @router.post("/connector/jobs/{job_id}/book")
-def book(job_id: str, body: SlotChoice, conn=Depends(get_db)):
+def book(job_id: str, body: SlotChoice, partner: DeliveryPartner, conn=Depends(get_db)):
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        job = get_job(job_id, conn)
+        job = get_job(job_id, partner, conn)
         if job["booked_slot_id"] is not None:
             if job["booked_slot_id"] != body.slot_id:
                 raise HTTPException(409, "job already booked for another slot")
@@ -191,15 +198,15 @@ def book(job_id: str, body: SlotChoice, conn=Depends(get_db)):
 
 
 @router.post("/connector/jobs/{job_id}/start")
-def start_work(job_id: str, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "in_progress")
+def start_work(job_id: str, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "in_progress")
 
 
 @router.post("/connector/jobs/{job_id}/complete")
-def complete_work(job_id: str, body: RepairReport, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "completed", body.model_dump())
+def complete_work(job_id: str, body: RepairReport, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "completed", body.model_dump())
 
 
 @router.post("/connector/jobs/{job_id}/invoice")
-def submit_invoice(job_id: str, body: RepairInvoice, conn=Depends(get_db), client=Depends(get_callback_client)):
-    return _send_event(conn, client, job_id, "invoice_ready", body.model_dump())
+def submit_invoice(job_id: str, body: RepairInvoice, partner: DeliveryPartner, conn=Depends(get_db), client=Depends(get_callback_client)):
+    return _send_event(conn, client, job_id, partner, "invoice_ready", body.model_dump())
