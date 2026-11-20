@@ -19,6 +19,27 @@ export type CaseStatus =
 export type Channel = 'portal_chat' | 'voice' | 'email' | 'manager'
 export type Urgency = 'low' | 'normal' | 'high'
 
+export type MissingIntakeField = 'heating_symptom' | 'hot_water_affected' | 'availability_preferences'
+
+export interface IntakeRequest {
+  report: string
+  hot_water_affected: boolean | null
+}
+
+export interface IntakeResult {
+  symptoms: string[]
+  urgency: Urgency | null
+  availability_preferences: string[]
+  missing_information: MissingIntakeField[]
+  safety_signal: 'none' | 'possible_gas_leak'
+}
+
+export interface IntakeResponse {
+  schema_version: '1.0'
+  source: 'model' | 'fallback'
+  result: IntakeResult
+}
+
 export interface Resident {
   id: string
   unit_id: string

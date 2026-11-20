@@ -94,6 +94,8 @@ Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLi
 
 For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix endpoint and FastAPI.
 
+The [structured intake endpoint](Docs/structured-intake-contract.md) uses deterministic extraction by default. Set `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` in `backend/.env` to enable model suggestions.
+
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 For the P1 backend demo, submit “No heat at all” from the two seeded units using FastAPI's interactive API. Approve one report and inspect both case timelines and the single HeatFix job. The backend also holds invoices over €3,000 for manager approval and loads simulated partner registrations from `backend/seed/partner-registrations/`. See the [API walkthrough](Docs/connector-spec.md#building-heating-reports).

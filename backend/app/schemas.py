@@ -7,6 +7,44 @@ IssueType = Literal["heating_repair"]
 Urgency = Literal["low", "normal", "high"]
 Channel = Literal["portal_chat", "voice", "email", "manager"]
 
+MissingIntakeField = Literal["heating_symptom", "hot_water_affected", "availability_preferences"]
+IntakeExcerpt = Annotated[str, Field(min_length=1, max_length=160)]
+
+
+def normalize_intake_text(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+class IntakeRequest(BaseModel):
+    model_config = ConfigDict(strict=True, str_strip_whitespace=True, extra="forbid")
+
+    report: str = Field(min_length=3, max_length=1950)
+    hot_water_affected: bool | None = None
+
+
+class IntakeResult(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    symptoms: list[IntakeExcerpt] = Field(max_length=12, json_schema_extra={"uniqueItems": True})
+    urgency: Urgency | None
+    availability_preferences: list[IntakeExcerpt] = Field(max_length=8, json_schema_extra={"uniqueItems": True})
+    missing_information: list[MissingIntakeField] = Field(max_length=3, json_schema_extra={"uniqueItems": True})
+    safety_signal: Literal["none", "possible_gas_leak"]
+
+    @model_validator(mode="after")
+    def validate_excerpts(self):
+        for items in (self.symptoms, self.availability_preferences, self.missing_information):
+            normalized = {normalize_intake_text(item) for item in items}
+            if "" in normalized or len(normalized) != len(items):
+                raise ValueError("intake items must be nonblank and unique")
+        return self
+
+
+class IntakeResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    source: Literal["model", "fallback"]
+    result: IntakeResult
+
 # Fields a resident may approve for sharing with a partner (data minimisation).
 SHAREABLE_FIELDS = ["name", "contact", "address", "unit", "heating_type", "access_details", "issue", "prior_heating_case"]
 REQUIRED_SHARED_FIELDS = ["address", "unit", "issue"]
