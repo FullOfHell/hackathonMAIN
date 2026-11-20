@@ -41,6 +41,25 @@ The prototype uses synthetic residents, properties, partners, and documents. It 
 
 The detailed folder layout and API contracts are defined in the project plan. Add runnable setup commands here as soon as the first application skeleton is merged; do not invent commands for components that do not exist yet.
 
+## Frontend development
+
+The fixture-backed React and TypeScript application is in `frontend/`.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Before opening a pull request, run:
+
+```bash
+npm run lint
+npm run build
+```
+
+Shared frontend, backend and integration fixtures are stored in `shared/fixtures/`. Treat their shape as a team contract.
+
 ## Run the backend
 
 ```bash
@@ -56,7 +75,7 @@ API docs: http://localhost:8000/docs. The SQLite database is created and seeded 
 
 For ElevenLabs and n8n (cloud services), expose the backend with `cloudflared tunnel --url http://localhost:8000` and put the HTTPS URL in `PUBLIC_BACKEND_URL`.
 
-Shared contract examples live in `backend/tests/fixtures/`. Build UIs and n8n workflows against these files.
+Backend tests consume the canonical contract examples from `shared/fixtures/`.
 
 ## Three-person workflow
 

@@ -1,0 +1,25 @@
+{
+  "id": "case_001",
+  "unit_id": "unit_4b",
+  "resident_id": "c_202",
+  "issue_type": "heating_repair",
+  "description": "No heat since last night, radiators are cold.",
+  "symptoms": ["radiators_cold"],
+  "urgency": "high",
+  "status": "AWAITING_SHARING_APPROVAL",
+  "partner_id": "p_heatfix",
+  "partner_job_id": null,
+  "source_channel": "portal_chat",
+  "created_at": "2026-11-20T18:02:00Z",
+  "updated_at": "2026-11-20T18:02:01Z",
+  "sharing_approval": null,
+  "sharing_request": {
+    "partner": {
+      "id": "p_heatfix",
+      "name": "HeatFix Aachen GmbH"
+    },
+    "proposed_fields": ["name", "contact", "address", "unit", "heating_type", "access_details", "issue"],
+    "required_fields": ["address", "unit", "issue"],
+    "shareable_fields": ["name", "contact", "address", "unit", "heating_type", "access_details", "issue", "prior_heating_case"]
+  }
+}

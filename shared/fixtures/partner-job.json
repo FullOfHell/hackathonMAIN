@@ -9,8 +9,21 @@
     "heating_type": "gas central heating",
     "access_details": "Caretaker Jonas Weber (+49 241 00000000) can open the boiler room; key safe at side entrance, code released by the property manager after booking."
   },
-  "issue": {"description": "No heat since last night, radiators are cold.", "symptoms": ["radiators_cold"], "priority": "high"},
-  "resident": {"name": "Lena Hoffmann", "contact": {"email": "lena@example.com", "phone": "+49 151 00000000"}},
-  "sharing": {"approved_fields": ["access_details", "address", "contact", "heating_type", "issue", "name", "unit"], "approved_at": "2026-11-20T18:05:00Z"},
+  "issue": {
+    "description": "No heat since last night, radiators are cold.",
+    "symptoms": ["radiators_cold"],
+    "priority": "high"
+  },
+  "resident": {
+    "name": "Lena Hoffmann",
+    "contact": {
+      "email": "lena@example.com",
+      "phone": "+49 151 00000000"
+    }
+  },
+  "sharing": {
+    "approved_fields": ["access_details", "address", "contact", "heating_type", "issue", "name", "unit"],
+    "approved_at": "2026-11-20T18:05:00Z"
+  },
   "callback_url": "https://demo.example/api/integrations/partner-events"
 }

@@ -1,0 +1,117 @@
+export type CaseStatus =
+  | 'REPORTED'
+  | 'TRIAGED'
+  | 'AWAITING_SHARING_APPROVAL'
+  | 'PARTNER_REQUESTED'
+  | 'SLOTS_OFFERED'
+  | 'SCHEDULED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'CLOSED'
+  | 'DECLINED'
+  | 'NO_PROVIDER_AVAILABLE'
+  | 'CANCELLED'
+  | 'NEEDS_HUMAN_REVIEW'
+  | 'FAILED'
+
+export type Channel = 'portal_chat' | 'voice' | 'email' | 'manager'
+export type Urgency = 'low' | 'normal' | 'high'
+
+export interface Resident {
+  id: string
+  unit_id: string
+  name: string
+  email: string
+  phone: string
+  preferred_contact: string
+  move_in: string
+}
+
+export interface UnitContext {
+  unit_id: string
+  property: {
+    id: string
+    address: string
+    building_year: number
+    heating: string
+    region: string
+    access_details: string
+  }
+  unit: { label: string; floor: number; size_sqm: number }
+  residents: Resident[]
+  prior_heating_cases: Array<{
+    id: string
+    issue_type: string
+    description: string
+    status: CaseStatus
+    created_at: string
+  }>
+}
+
+export interface CreateCaseRequest {
+  unit_id: string
+  resident_id: string
+  issue_type: 'heating_repair'
+  description: string
+  symptoms: string[]
+  urgency: Urgency
+  source_channel: Channel
+}
+
+export interface SharingApprovalRequest {
+  approved_fields: string[]
+  channel: Channel
+  approved_by: string
+}
+
+export interface SharingApproval {
+  id: number
+  case_id: string
+  partner_id: string
+  shared_fields: string[]
+  channel: Channel
+  approved_by: string
+  recorded_at: string
+}
+
+export interface SharingRequest {
+  partner: { id: string; name: string }
+  proposed_fields: string[]
+  required_fields: string[]
+  shareable_fields: string[]
+}
+
+export interface MaintenanceCase extends CreateCaseRequest {
+  id: string
+  status: CaseStatus
+  partner_id: string | null
+  partner_job_id: string | null
+  created_at: string
+  updated_at: string
+  sharing_approval: SharingApproval | null
+  sharing_request?: SharingRequest
+}
+
+export interface CaseEvent {
+  id: number
+  case_id: string
+  type: string
+  actor: string
+  timestamp: string
+  payload: Record<string, unknown>
+}
+
+export interface PartnerJob {
+  schema_version: '1.0'
+  request_id: string
+  idempotency_key: string
+  service_type: 'heating_repair'
+  property: Record<string, string>
+  issue: { description: string; symptoms: string[]; priority: Urgency }
+  resident: {
+    name?: string
+    contact?: { email: string; phone: string }
+  }
+  sharing: { approved_fields: string[]; approved_at: string }
+  callback_url: string
+}
