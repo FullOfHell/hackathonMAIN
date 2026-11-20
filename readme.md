@@ -138,7 +138,9 @@ For n8n Cloud, follow the [workflow setup](n8n/README.md) to connect the HeatFix
 
 The [structured intake endpoint](Docs/structured-intake-contract.md) uses deterministic extraction by default. Set `OPENAI_API_KEY` and `OPENAI_TEXT_MODEL` in `backend/.env` to enable model suggestions.
 
-To enable optional voice dictation, set `OPENAI_API_KEY` and `OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe` in `backend/.env` and restart FastAPI. Open **Report** on localhost or HTTPS, allow microphone access, and record up to 30 seconds. Choose **Transcribe recording**, review the text, and select **Add transcript to report**. The normal review and sharing steps still apply. Use fictional reports for the demo.
+To enable optional voice dictation, use `TRANSCRIPTION_PROVIDER=openai` (the default) with `OPENAI_API_KEY` and `OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe`. For ElevenLabs Scribe v2, use `TRANSCRIPTION_PROVIDER=elevenlabs` and `ELEVENLABS_API_KEY`. Keep these settings in `backend/.env` and restart FastAPI after editing them.
+
+Open **Report** on localhost or HTTPS, allow microphone access, and press **Record**. Say a short fictional report such as “The radiators in the demo apartment are cold,” then stop the recording. Choose **Transcribe recording**, verify that the text is editable, and select **Add transcript to report**. This checks dictation in one request. The normal review and sharing steps still apply.
 
 Backend tests consume the canonical contract examples from `shared/fixtures/`.
 

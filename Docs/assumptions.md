@@ -24,7 +24,7 @@ The prototype simulates centrix and the partner. It is not connected to the real
 - **Building heating.** Two distinct units at one property reporting loss of heat within an inclusive 24-hour UTC window indicate a *possible* shared outage. The demo assumes a common heating system and one servicing partner per building. The rule uses open reports, an explicit `no_heat` symptom or a direct typed statement such as the portal's “No heat at all”. An unresolved case with a partial or ambiguous symptom can proceed individually.
 - **Building consent.** An existing approved repair takes the call-out. Otherwise the first resident to approve becomes the dispatch contact. A linked resident's report, contact details and documents remain private to their own case. The shared timeline carries the repair status and the booked window. Only the dispatch case can book or approve an invoice. Already-issued independent jobs from older data require manual reconciliation.
 - **Partner registration.** Local JSON manifests describe simulated providers. Registration and discovery run offline. Internet offers, signatures and activation remain later steps in the connector design.
-- **Voice dictation.** Selecting Transcribe sends the recorded clip to OpenAI for speech-to-text. The app uses the editable transcript as report input and does not save the audio to the case. Transcription does not create a case or dispatch a job.
+- **Voice dictation.** Selecting Transcribe sends the recorded clip to the selected speech-to-text provider (OpenAI by default or ElevenLabs Scribe v2). The app uses the editable transcript as report input and does not save the audio to the case. Transcription does not create a case or dispatch a job.
 
 ## Resident profile API
 

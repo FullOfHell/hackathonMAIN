@@ -137,7 +137,7 @@ export function VoiceDraft({ remaining, disabled, onAdd }: VoiceDraftProps) {
 
   return (
     <section className="voice-draft" aria-label="Voice input">
-      <p className="muted">Record up to {maxSeconds} seconds. Selecting Transcribe sends the clip to OpenAI.</p>
+      <p className="muted">Record up to {maxSeconds} seconds. Selecting Transcribe sends the clip to the configured speech-to-text provider.</p>
       {error && <p className="error" role="alert">{error}</p>}
       {phase === 'permission' && <p role="status">Waiting for microphone access…</p>}
       {phase === 'recording' && <p role="status">Recording…</p>}
