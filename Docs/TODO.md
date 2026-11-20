@@ -158,7 +158,7 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 
 - [ ] Model the spending limit from the owner–manager agreement and record advance owner authorization for above-limit work. The current high-invoice manager action happens after completion. Allow the owner to compare quotes when the agreement or circumstances call for them.
 - [x] B implemented resident self-service for name, email, phone and contact preference. The API tests cover partial saves, restart persistence and partner consent across edits and dispatch retries.
-- [ ] A will connect profile editing to the selected resident, send only edited fields, use the returned resident for the sharing preview, and show field validation errors. See the [request, response and error examples](assumptions.md#resident-profile-api).
+- [x] B connected **Edit my details** in the resident portal. Browser checks covered Cancel, a failed save and correction during report review, selected-field consent, a lost HeatFix acknowledgment, reload persistence and fixture jobs before and after a profile edit. See the [profile contract and portal behavior](assumptions.md#resident-profile-api).
 - [ ] Give the manager a follow-up flag for a received job with no partner response. The organizer specified no response deadline. Existing uncertain-dispatch retries reuse the original key.
 
 ## P2 - Optional; skip if the demo is at risk

@@ -36,7 +36,7 @@ For example, send this body to `PATCH /api/units/unit_4b/residents/c_202/profile
 {"acting_resident_id":"c_202","phone":"+49 151 00000001"}
 ```
 
-HTTP 200 returns the complete resident object used in `GET /api/units/unit_4b/context` under `residents[]`. A can use it immediately in the profile and sharing preview. Repeating the PATCH returns the same values.
+HTTP 200 returns the complete resident object used in `GET /api/units/unit_4b/context` under `residents[]`. The portal uses this response in the profile and sharing preview. Repeating the PATCH returns the same values.
 
 ```json
 {
@@ -58,3 +58,9 @@ HTTP 200 returns the complete resident object used in `GET /api/units/unit_4b/co
 | Send `{"acting_resident_id":"c_202","address":"Changed"}` | 422 | FastAPI validation error in `detail[]` with `loc: ["body","address"]` and `type: "extra_forbidden"` |
 
 A profile save updates only the resident row. Cases, consent, dispatch and timeline events each retain their own API actions. A contact preference alone sends no message. For C, the existing `name` approval shares the current name and the existing `contact` approval shares the current email and phone together. Both use the values at approval time. A dispatch retry reuses the saved order payload and idempotency key.
+
+In the resident portal, **Your home → Edit my details** opens an inline form. Save sends the edited fields and keeps the report mounted, including its review text, case ID and sharing selections. Cancel discards the draft. A failed save leaves the form open for correction or retry. After a failed PATCH, a new approval checks the saved profile in case the server committed the change before the reply was lost.
+
+Approval waits for an in-flight profile save. Changing a selected or required name or contact value clears the approval checkbox. A preference change leaves the checkbox as it was. The first dispatch attempt captures the displayed values and approval body. If the outcome is uncertain, the portal waits for evidence of recorded consent before allowing another profile edit. Once consent is recorded, the resident can edit their profile while a retry continues to use the captured preview and saved order.
+
+Fixture mode uses a tab-local copy of the seeded resident for the home panel, consent preview and new HeatFix jobs. With session storage available, profile edits survive a reload in the same tab. Fixture reports and jobs follow their existing page lifetime. Each job keeps the values approved when it was created. A fresh browser session starts with the checked-in synthetic resident.
