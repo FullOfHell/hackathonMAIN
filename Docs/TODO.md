@@ -118,7 +118,8 @@ Do not begin P1 work until this milestone is reliable.
 - [x] Verify that concurrent retries after an outage or lost acknowledgment produce one document and one corresponding case transition.
 - [x] Test unavailable-provider escalation.
 - [x] Rehearse the typed portal against live FastAPI on a fresh synthetic SQLite database with external services disabled. Repeating the minimum-field approval returned the same HeatFix job. After a backend restart the appointment, repair report, €125 invoice and all 12 actor-stamped events still belonged to the original case and unit. A separate case remained `DECLINED`.
-- [ ] Rehearse the full typed demo with live n8n enabled.
+- [x] Rehearse the full typed demo against C’s published provider-neutral workflow on a local n8n instance. The authenticated webhook created one job. A real webhook replay returned the same job with `duplicate: true`. A third execution dispatched the separate case used for rejection.
+- [ ] C: repeat in the shared demo environment and record the execution and case/job IDs in the checkpoint PR.
 - [x] Add real startup commands to `readme.md`.
 - [ ] Create `Docs/demo-script.md`.
 - [ ] Tag the first reliable typed version as `demo-p0`.
