@@ -164,5 +164,5 @@ Implement in this order after P0 is stable:
 ## Next team handoffs
 
 - **A - Frontend:** connect structured extraction when ready and rehearse the full browser flow.
-- **B - Backend:** the P0 case, booking, repair, invoice and failure APIs are ready for A and C. The [closed-case fixture](../shared/fixtures/case-closed.json) matches the unit history response for a completed and invoiced case.
+- **B - Backend:** P1 adds building repair progress on each case, manager invoice approval, and partner discovery. Demo the two seeded units first and keep the P0 typed single-unit flow as the fallback. See the [connector contract](connector-spec.md).
 - **C - Integrations:** verify live n8n dispatch and publish the structured intake contract.

@@ -1,0 +1,11 @@
+{
+  "outage_id": "outage_demo",
+  "is_dispatch_case": false,
+  "repair_status": "SCHEDULED",
+  "partner_job_id": "job_1234abcd",
+  "scope_confirmed": true,
+  "appointment": {
+    "start": "2026-11-21T08:00:00+00:00",
+    "end": "2026-11-21T10:00:00+00:00"
+  }
+}

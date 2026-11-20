@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS cases (
   source_channel TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   availability_preferences TEXT NOT NULL DEFAULT '[]'
 );
+CREATE TABLE IF NOT EXISTS partner_capabilities (
+  partner_id TEXT PRIMARY KEY REFERENCES partners(id), manifest TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS case_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
   type TEXT NOT NULL, actor TEXT NOT NULL, timestamp TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}'
@@ -52,6 +55,14 @@ CREATE TABLE IF NOT EXISTS sharing_approvals (
 CREATE TABLE IF NOT EXISTS partner_orders (
   case_id TEXT PRIMARY KEY REFERENCES sharing_approvals(case_id), payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS building_outages (
+  id TEXT PRIMARY KEY, dispatch_case_id TEXT UNIQUE REFERENCES cases(id),
+  scope_confirmed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS outage_cases (
+  case_id TEXT PRIMARY KEY REFERENCES cases(id), outage_id TEXT NOT NULL REFERENCES building_outages(id)
+);
+CREATE INDEX IF NOT EXISTS outage_cases_by_outage ON outage_cases(outage_id);
 CREATE TABLE IF NOT EXISTS processed_partner_events (
   event_id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
   job_id TEXT NOT NULL, type TEXT NOT NULL, occurred_at TEXT NOT NULL, event_data TEXT
@@ -122,8 +133,15 @@ def init_db(seed: bool = True) -> None:
             for doc in conn.execute("SELECT event_id,content FROM case_documents"):
                 conn.execute("UPDATE processed_partner_events SET event_data=? WHERE event_id=?",
                              (json.dumps(json.loads(doc["content"]), sort_keys=True), doc["event_id"]))
-        if seed and conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
-            load_seed(conn)
+        if seed:
+            from app.partners.registry import install_registrations
+            install_registrations(conn)
+            if conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
+                load_seed(conn)
+        if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
+            from app.services.invoices import review_legacy_invoices
+            review_legacy_invoices(conn)
+            conn.execute("PRAGMA user_version=1")
         conn.commit()
     finally:
         conn.close()

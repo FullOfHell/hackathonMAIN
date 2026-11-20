@@ -8,6 +8,7 @@ from app.db import get_db
 from app.integrations.connector import partner_webhook_secret
 from app.schemas import InvoiceReady, PartnerEvent, PartnerFailed, RepairCompleted, SlotsOffered
 from app.services import cases as svc
+from app.services.invoices import CENTRIX_LIMIT_CENTS
 from app.states import CaseStatus
 
 router = APIRouter(prefix="/api/integrations", tags=["connector"])
@@ -58,7 +59,13 @@ def partner_event(body: PartnerEvent, conn=Depends(get_db)):
                 "SELECT 1 FROM case_documents WHERE case_id=? AND kind='completion_report'", (body.request_id,)
             ).fetchone():
                 raise HTTPException(409, "a completion report is required before invoicing")
-            svc.transition(conn, body.request_id, EVENT_TARGETS[body.type], actor, {**trace, "document_kind": kind})
+            target = EVENT_TARGETS[body.type]
+            if isinstance(body, InvoiceReady) and body.data.amount_cents > CENTRIX_LIMIT_CENTS:
+                target = CaseStatus.AWAITING_INVOICE_APPROVAL
+            # A new invoice ID cannot replace a document already queued for approval.
+            if isinstance(body, InvoiceReady) and case["status"] != CaseStatus.COMPLETED:
+                raise HTTPException(409, "only a completed repair can receive an invoice")
+            svc.transition(conn, body.request_id, target, actor, {**trace, "document_kind": kind})
             conn.execute("INSERT INTO case_documents (case_id,kind,event_id,content) VALUES (?,?,?,?)",
                          (body.request_id, kind, body.event_id, body.data.model_dump_json()))
         elif body.type == "accepted":

@@ -18,6 +18,21 @@ def transition(conn: sqlite3.Connection, case_id: str, target: CaseStatus, actor
     check_transition(current, target)
     conn.execute("UPDATE cases SET status=?, updated_at=? WHERE id=?", (target.value, now_iso(), case_id))
     record_event(conn, case_id, "case.status_changed", actor, {"from": current.value, "to": target.value, **(payload or {})})
+    # Residents following a building job receive its public progress on their own timeline.
+    followers = conn.execute(
+        "SELECT m.case_id,o.id,o.scope_confirmed FROM building_outages o JOIN outage_cases m ON m.outage_id=o.id "
+        "JOIN cases c ON c.id=m.case_id WHERE o.dispatch_case_id=? AND c.status=?",
+        (case_id, CaseStatus.LINKED_TO_BUILDING_REPAIR)).fetchall()
+    for member in followers:
+        notice = {"outage_id": member["id"], "repair_status": target.value, "scope_confirmed": bool(member["scope_confirmed"])}
+        record_event(conn, member["case_id"], "building.repair_updated", "system", notice)
+        if target in (CaseStatus.COMPLETED, CaseStatus.CLOSED) and not member["scope_confirmed"]:
+            transition(conn, member["case_id"], CaseStatus.NEEDS_HUMAN_REVIEW, "system",
+                       {**notice, "reason": "building scope unconfirmed at repair completion"})
+        elif target == CaseStatus.CLOSED:
+            transition(conn, member["case_id"], CaseStatus.CLOSED, "system", notice)
+        elif target in (CaseStatus.DECLINED, CaseStatus.FAILED, CaseStatus.NEEDS_HUMAN_REVIEW):
+            transition(conn, member["case_id"], CaseStatus.NEEDS_HUMAN_REVIEW, "system", notice)
 
 
 def unit_context(conn: sqlite3.Connection, unit_id: str) -> dict | None:
@@ -43,7 +58,9 @@ def unit_context(conn: sqlite3.Connection, unit_id: str) -> dict | None:
 def select_partner(conn: sqlite3.Connection, service_type: str, region: str) -> dict | None:
     """Deterministic routing (plan §6C): service type -> region -> active; tie-break by name."""
     eligible = []
-    for p in conn.execute("SELECT * FROM partners WHERE active=1 ORDER BY name"):
+    for p in conn.execute("SELECT p.* FROM partners p LEFT JOIN partner_capabilities k ON k.partner_id=p.id "
+                          "WHERE p.active=1 AND (k.manifest IS NULL OR json_extract(k.manifest,'$.kind')='delivery') "
+                          "ORDER BY p.name,p.id"):
         if service_type in json.loads(p["service_types"]) and region in json.loads(p["regions"]):
             eligible.append(dict(p))
     return eligible[0] if eligible else None
@@ -79,6 +96,18 @@ def get_case(conn: sqlite3.Connection, case_id: str) -> dict | None:
         "SELECT a.case_id,a.slot_id,s.start,s.end,a.booked_at FROM appointments a "
         "JOIN appointment_slots s USING (case_id,slot_id) WHERE a.case_id=?", (case_id,)).fetchone()
     case["appointment"] = dict(appointment) if appointment else None
+    building = conn.execute(
+        "SELECT o.id AS outage_id, o.dispatch_case_id, o.scope_confirmed, lead.status AS repair_status, "
+        "lead.partner_job_id, s.start, s.end FROM outage_cases m JOIN building_outages o ON o.id=m.outage_id "
+        "LEFT JOIN cases lead ON lead.id=o.dispatch_case_id LEFT JOIN appointments a ON a.case_id=lead.id "
+        "LEFT JOIN appointment_slots s ON s.case_id=a.case_id AND s.slot_id=a.slot_id WHERE m.case_id=?",
+        (case_id,)).fetchone()
+    case["building_repair"] = None if building is None else {
+        "outage_id": building["outage_id"], "is_dispatch_case": building["dispatch_case_id"] == case_id,
+        "repair_status": building["repair_status"], "partner_job_id": building["partner_job_id"],
+        "scope_confirmed": bool(building["scope_confirmed"]),
+        "appointment": {"start": building["start"], "end": building["end"]} if building["start"] else None,
+    }
     documents = case_documents(conn, case_id)
     case["completion_report"] = documents.get("completion_report")
     case["invoice"] = documents.get("invoice")

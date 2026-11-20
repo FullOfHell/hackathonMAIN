@@ -358,3 +358,51 @@ def test_failed_job_escalates_once_and_cannot_be_booked(client, offered):
     assert history[-1]["actor"] == "manager"
     assert client.post(case_url(failed) + "/escalate").status_code == 200
     assert client.get(case_url(failed) + "/events").json() == history
+
+
+@pytest.mark.parametrize(("cents", "status"), [
+    (299999, "CLOSED"), (300000, "CLOSED"), (300001, "AWAITING_INVOICE_APPROVAL")])
+def test_invoice_threshold_and_manager_approval(client, scheduled, cents, status):
+    case = case_url(scheduled)
+    assert client.post(case + "/approve-invoice").status_code == 409
+    start, complete, invoice = [e | {"request_id": scheduled["id"], "job_id": scheduled["partner_job_id"]}
+                                for e in load("partner-repair-events.json")]
+    invoice["data"]["amount_cents"] = cents
+    for body in (start, complete, invoice, invoice):
+        assert client.post(CALLBACK, json=body, headers=HEADER).is_success
+    with TestClient(app) as restarted:
+        current = restarted.get(case).json()
+        assert current["status"] == status and current["invoice"]["amount_cents"] == cents
+        assert current in restarted.get("/api/units/unit_4b/cases").json()
+        if status == "CLOSED":
+            assert restarted.post(case + "/approve-invoice").status_code == 409
+            return
+        conflicting = invoice | {"event_id": "replacement", "data": invoice["data"] | {"amount_cents": 100}}
+        assert restarted.post(CALLBACK, json=conflicting, headers=HEADER).status_code == 409
+        assert restarted.get(case).json() == current
+        with ThreadPoolExecutor(2) as pool:
+            responses = list(pool.map(lambda _: restarted.post(case + "/approve-invoice"), range(2)))
+        assert all(r.is_success and r.json()["status"] == "CLOSED" for r in responses)
+        assert restarted.post(CALLBACK, json=invoice, headers=HEADER).json()["duplicate"]
+        events = restarted.get(case + "/events").json()
+        assert sum(e["type"] == "invoice.manager_approved" for e in events) == 1
+        assert events[-1]["actor"] == "manager" and events[-1]["payload"]["to"] == "CLOSED"
+
+
+def test_upgrade_flags_previously_auto_closed_large_invoice_once(client, scheduled):
+    for e in load("partner-repair-events.json"):
+        body = e | {"request_id": scheduled["id"], "job_id": scheduled["partner_job_id"]}
+        assert client.post(CALLBACK, json=body, headers=HEADER).is_success
+    with closing(connect()) as conn, conn:
+        conn.execute("UPDATE case_documents SET content=json_set(content,'$.amount_cents',350000) "
+                     "WHERE case_id=? AND kind='invoice'", (scheduled["id"],))
+        conn.execute("PRAGMA user_version=0")
+    init_db()
+    init_db()
+    case = case_url(scheduled)
+    assert client.get(case).json()["status"] == "AWAITING_INVOICE_APPROVAL"
+    events = client.get(case + "/events").json()
+    assert sum(e["actor"] == "system:migration" for e in events) == 1
+    assert client.post(case + "/approve-invoice").is_success
+    init_db()
+    assert client.get(case).json()["status"] == "CLOSED"
