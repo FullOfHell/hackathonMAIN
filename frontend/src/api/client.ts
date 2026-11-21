@@ -1,6 +1,6 @@
 import { caseFixture, partnerJobFixture, unitContextFixture } from './fixtures'
 import { defaultContractorSlug } from '../repairNotifications'
-import partnerEventFixture from '../../../shared/fixtures/partner-event.json'
+import { fixtureWeek, fixtureWeekOffset } from './fixtureTimetable'
 import type {
   CaseEvent,
   ContactChannel,
@@ -33,6 +33,7 @@ const jobAvailabilityPath = (slug: string, jobId: string) =>
 const demoCases = new Map<string, MaintenanceCase>()
 const demoJobs = new Map<string, PartnerInboxJob>()
 const demoEvents = new Map<string, CaseEvent[]>()
+const demoAvailability = new Map<string, Set<string>>()
 const demoHome = structuredClone(unitContextFixture)
 const profileTextFields = ['name', 'email', 'phone', 'address', 'unit', 'heating'] as const
 const profileFields = [...profileTextFields, 'preferred_contact'] as const
@@ -247,19 +248,22 @@ export const api = {
     request(`/api/manager/contractors/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
 
   getAvailability: (unitId: string, residentId: string, week: number): Promise<TimetableWeek> =>
-    request(`${availabilityPath(unitId, residentId)}?week=${week}&acting_resident_id=${encodeURIComponent(residentId)}`),
+    apiBaseUrl ? request(`${availabilityPath(unitId, residentId)}?week=${week}&acting_resident_id=${encodeURIComponent(residentId)}`)
+      : waitForFixture(demoCalendar(residentId, week)),
 
   saveAvailability: (unitId: string, residentId: string, weekStart: string, starts: string[]): Promise<TimetableWeek> =>
-    request(availabilityPath(unitId, residentId), {
+    apiBaseUrl ? request(availabilityPath(unitId, residentId), {
       method: 'PUT',
       body: JSON.stringify({ acting_resident_id: residentId, week_start: weekStart, available_starts: starts }),
-    }),
+    }) : saveDemoAvailability(residentId, weekStart, starts),
 
   getJobAvailability: (slug: string, jobId: string, week: number): Promise<ContractorTimetableWeek> =>
-    request(`${jobAvailabilityPath(slug, jobId)}?week=${week}`),
+    apiBaseUrl ? request(`${jobAvailabilityPath(slug, jobId)}?week=${week}`)
+      : waitForFixture(demoJobCalendar(slug, jobId, week)),
 
   bookTenantVisit: (slug: string, jobId: string, start: string): Promise<NonNullable<MaintenanceCase['appointment']>> =>
-    request(jobAvailabilityPath(slug, jobId) + '/book', { method: 'POST', body: JSON.stringify({ start }) }),
+    apiBaseUrl ? request(jobAvailabilityPath(slug, jobId) + '/book', { method: 'POST', body: JSON.stringify({ start }) })
+      : bookDemoVisit(slug, jobId, start),
 
   listPartnerJobs: (partnerSlug: string): Promise<PartnerInboxJob[]> =>
     apiBaseUrl ? request(partnerJobsPath(partnerSlug))
@@ -275,7 +279,7 @@ export const api = {
   selectSlot: (caseId: string, slotId: string, residentId: string): Promise<MaintenanceCase> =>
     apiBaseUrl ? request('/api/cases/' + encodeURIComponent(caseId) + '/select-slot', {
       method: 'POST', body: JSON.stringify({ slot_id: slotId, resident_id: residentId }),
-    }) : bookDemoSlot(caseId, slotId, residentId),
+    }) : Promise.reject(new Error('This appointment is unavailable.')),
 }
 
 export function invoiceUrl(caseId: string) {
@@ -293,9 +297,9 @@ async function updateDemoJob(jobId: string, command: PartnerCommand): Promise<Pa
   const item = job && demoCases.get(job.request_id)
   if (!job || !item) throw new Error('Job unavailable.')
   const action = command.action
-  const status = { accept: 'accepted', reject: 'rejected', 'offer-slots': 'slots_offered',
+  const status = { accept: 'accepted', reject: 'rejected',
     start: 'in_progress', complete: 'completed', invoice: 'invoice_ready' }[action]
-  const allowed = { accept: ['received'], reject: ['received', 'accepted'], 'offer-slots': ['accepted'],
+  const allowed = { accept: ['received'], reject: ['received', 'accepted'],
     start: ['scheduled'], complete: ['in_progress'], invoice: ['completed'] }[action]
   if (job.status === status) return waitForFixture(job)
   if (!allowed.includes(job.status)) {
@@ -306,13 +310,12 @@ async function updateDemoJob(jobId: string, command: PartnerCommand): Promise<Pa
   if (action === 'accept') {
     recordDemoEvent(item.id, 'partner:heatfix', 'partner.accepted', {})
   } else {
-    const nextStatus = { reject: 'DECLINED', 'offer-slots': 'SLOTS_OFFERED', start: 'IN_PROGRESS',
+    const nextStatus = { reject: 'DECLINED', start: 'IN_PROGRESS',
       complete: 'COMPLETED', invoice: 'CLOSED' }[action] as MaintenanceCase['status']
     const now = new Date().toISOString()
     const document = { case_id: item.id, unit_id: item.unit_id, created_at: now }
     demoCases.set(item.id, {
       ...item, status: nextStatus, updated_at: now,
-      slots: action === 'offer-slots' ? partnerEventFixture.data.slots : item.slots,
       completion_report: command.action === 'complete'
         ? { ...document, ...command.body, kind: 'completion_report', filename: 'completion_report.json',
             url: '/api/cases/' + item.id + '/documents/completion_report' } : item.completion_report,
@@ -325,21 +328,51 @@ async function updateDemoJob(jobId: string, command: PartnerCommand): Promise<Pa
   return waitForFixture(updated)
 }
 
-async function bookDemoSlot(caseId: string, slotId: string, residentId: string): Promise<MaintenanceCase> {
-  const item = demoCases.get(caseId)
-  const slot = item?.slots.find((option) => option.slot_id === slotId)
-  if (!item || !slot || item.resident_id !== residentId || !item.partner_job_id) throw new Error('Slot unavailable.')
-  if (item.appointment?.slot_id === slotId) return waitForFixture(item)
-  if (item.status !== 'SLOTS_OFFERED') throw new Error('This case cannot be booked again.')
-  const job = demoJobs.get(item.partner_job_id)
-  if (!job) throw new Error('Job unavailable.')
+function demoCalendar(residentId: string, week: number): TimetableWeek {
+  const starts = demoAvailability.get(residentId) ?? new Set<string>()
+  const visits = [...demoCases.values()].flatMap((item) => item.appointment ? [item.appointment] : [])
+  return fixtureWeek(week, starts, visits)
+}
+
+async function saveDemoAvailability(residentId: string, monday: string, starts: string[]) {
+  const week = fixtureWeekOffset(monday)
+  if (!Number.isInteger(week) || week < 0 || week > 2) throw new Error('Choose one of the displayed weeks.')
+  const calendar = demoCalendar(residentId, week)
+  const saved = new Set(demoAvailability.get(residentId))
+  const selected = new Set(starts)
+  for (const slot of calendar.slots) {
+    if (slot.past || slot.booked) continue
+    if (selected.has(slot.start)) saved.add(slot.start)
+    else saved.delete(slot.start)
+  }
+  demoAvailability.set(residentId, saved)
+  return waitForFixture(demoCalendar(residentId, week))
+}
+
+function demoJobCalendar(slug: string, jobId: string, week: number): ContractorTimetableWeek {
+  const job = demoJobs.get(jobId)
+  const item = job && demoCases.get(job.request_id)
+  if (slug !== defaultContractorSlug || !job || !item) throw new Error('Job unavailable.')
+  const calendar = demoCalendar(item.resident_id, week)
+  const canBook = job.status === 'accepted'
+  return { ...calendar, can_book: canBook, appointment: item.appointment ?? null,
+    slots: canBook ? calendar.slots.filter((slot) => slot.available && !slot.booked && !slot.past) : [] }
+}
+
+async function bookDemoVisit(slug: string, jobId: string, start: string) {
+  const job = demoJobs.get(jobId)
+  const item = job && demoCases.get(job.request_id)
+  if (slug !== defaultContractorSlug || !job || !item) throw new Error('Job unavailable.')
+  if (item.appointment?.start === start) return waitForFixture(item.appointment)
+  const slot = [0, 1, 2].flatMap((week) => demoJobCalendar(slug, jobId, week).slots)
+    .find((candidate) => candidate.start === start)
+  if (!slot) throw new Error('This slot is no longer available.')
   const now = new Date().toISOString()
-  const booked: MaintenanceCase = { ...item, status: 'SCHEDULED', updated_at: now,
-    appointment: { ...slot, case_id: caseId, booked_at: now } }
-  demoCases.set(caseId, booked)
+  const appointment = { slot_id: start, start, end: slot.end, case_id: item.id, booked_at: now }
+  demoCases.set(item.id, { ...item, status: 'SCHEDULED', updated_at: now, appointment })
   demoJobs.set(job.id, { ...job, status: 'scheduled' })
-  recordDemoEvent(caseId, 'resident:' + residentId, 'case.status_changed', { to: 'SCHEDULED' })
-  return waitForFixture(booked)
+  recordDemoEvent(item.id, 'partner:heatfix', 'case.status_changed', { to: 'SCHEDULED' })
+  return waitForFixture(appointment)
 }
 
 function createDemoCase(body: CreateCaseRequest): Promise<MaintenanceCase> {

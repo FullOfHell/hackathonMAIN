@@ -56,8 +56,8 @@ npm.cmd run dev -- --port 5173 --strictPort
 
 ### Walk through a heating report
 
-1. In **Report**, enter “No heat since last night.” Review the editable summary, answer any follow-up, choose the fields to share and select **Approve and send**.
-2. In the resident portal's **Availability** view, save an available time. In the assigned contractor's inbox (HeatFix for the default setup), find the job, select **Accept**, choose the resident's available time and select **Book visit**.
+1. In **Report**, enter “No heat since last night.” Open **Review your report**, check the summary and save at least one available hour under **Availability**. Continue to sharing and approve sending the shown fields to the named contractor.
+2. Open the assigned contractor's inbox and select **Accept**. Choose one of the tenant's saved times and select **Book visit**. If no saved time is available to book, the tenant can add more times from **My cases → View case details → Update my availability**. The contractor can then refresh availability.
 3. In **HeatFix inbox**, refresh the job list, select **Start repair**, then **Complete repair**. Enter a repair summary and select **Save completion**.
 4. Select **Submit demo invoice**, then **Confirm demo invoice**. Open **My cases** or **Manager** to check the same case and unit, read the repair outcome and download the synthetic invoice.
 
@@ -71,7 +71,8 @@ Everyone - including AI coding tools - should read these files before changing t
 4. [`Docs/SpecialFeatures.md`](Docs/SpecialFeatures.md) - differentiators to attempt only after the core flow works.
 5. [`Docs/git-workflow.md`](Docs/git-workflow.md) - branch flow, push checks, CI, coverage and secret handling.
 6. [`Docs/mentor-feedback.md`](Docs/mentor-feedback.md) - Reltix mentor answers and the product decisions they changed.
-5. [`Docs/TODO.md`](Docs/TODO.md) - prioritized implementation checklist for the three-person team.
+7. [`Docs/TODO.md`](Docs/TODO.md) - implemented features and remaining checks.
+8. [`Docs/demo-script.md`](Docs/demo-script.md) - timed recording and hand-in checklist.
 
 If these documents conflict, the official track description wins for challenge requirements. `AGENTS.md` wins for repository working conventions.
 
@@ -80,33 +81,34 @@ If these documents conflict, the official track description wins for challenge r
 This maintenance coordinator is the Reltix demo for the MAIN Summit AI Hackathon. It uses centrix property context to take a resident's heating report through booking, repair and invoicing on the same unit.
 
 ```text
-resident reports no heating
-  -> context-aware triage
-  -> approval to share required data
-  -> repair case created
-  -> generic connector sends job to mock partner
-  -> partner offers slots
-  -> resident books a slot
-  -> partner completes repair and attaches invoice
-  -> centrix unit shows the full outcome and timeline
+resident types or dictates a heating issue
+  -> review symptoms and priority, then save tenant availability
+  -> report is persisted and the named contractor is shown
+  -> tenant approves sharing
+  -> the connector sends one approved job to the assigned contractor
+  -> contractor accepts and books one of the saved times
+  -> contractor completes the repair and attaches the invoice
+  -> tenant and manager see the outcome on the original case and unit
 ```
 
 The prototype uses synthetic residents, properties, partners, and documents. It does not connect to the real centrix API or a real contractor.
 
-## Planned architecture
+## Demo architecture
 
 - React + TypeScript for resident, partner, and property-manager views.
 - FastAPI + SQLite as the source of truth for cases, state transitions, approvals, appointments, and documents.
 - A provider-neutral partner connector with versioned, idempotent requests and callbacks.
-- n8n for integration orchestration.
+- Optional n8n dispatch through the provider-neutral approved-order gateway. Direct dispatch is available when both webhook URLs are empty.
 - Structured LLM extraction for issue intake; the model never invents booking or repair status.
-- Resident channels: the portal plus a simulated text-message outbox with one-click links. No voice agent, since Reltix already has one (see [mentor feedback](Docs/mentor-feedback.md)).
+- Resident channels are the portal and optional email or text notifications linking to My cases. Browser dictation feeds the portal draft. See [mentor feedback](Docs/mentor-feedback.md) for the phone-agent scope.
 
 The project plan describes the full demo. The implemented booking and callback contracts are in the [connector specification](Docs/connector-spec.md).
 
 ## Frontend development
 
-The React and TypeScript portal is in `frontend/`. It includes tenant intake, an editable review, explicit sharing approval, a case timeline, and the HeatFix inbox.
+The [frontend guide](frontend/README.md) covers all three views, including the themed report wizard, contractor inbox picker, appointment display, collapsible manager repair groups and contractor removal.
+
+The report requires a saved future slot in any of its three displayed weeks. Fixture mode provides the same tenant-supplied calendar and contractor booking flow using in-memory data.
 
 ```bash
 cd frontend
@@ -143,7 +145,7 @@ For the P1 backend demo, submit “No heat at all” from the two seeded units u
 
 ## Notifications
 
-The backend writes one notification per recipient for each case milestone: request sent to the partner after the resident approves sharing (a saved report alone sends nothing), linked to a building repair, appointment offered and confirmed, repair progress, building heating incidents and invoices above €3,000. The portal box reads `GET /api/notifications?recipient_type=resident&recipient_id=c_202`. A noreply bot sends the same text plus a link by email or text message, as each recipient's preferences allow (`GET`/`PUT /api/recipients/{type}/{id}/notification-preferences`). The seed includes a synthetic owner, `o_101` (Maria Becker). Delivery failures are recorded on the notification and never stop the case flow.
+The backend writes one notification per recipient for each case milestone: request sent to the partner after the resident approves sharing (a saved report alone sends nothing), linked to a building repair, appointment offered and confirmed, repair progress, building heating incidents and invoices above €3,000. The notification outbox can be inspected through `GET /api/notifications?recipient_type=resident&recipient_id=c_202`. In the portal, the resident bell lists acceptance, decline and completion for their repairs. Each contractor bell lists that contractor’s approved jobs. Clicking a message marks it read and keeps the panel open. A noreply bot sends the same text plus a link by email or text message, as each recipient's preferences allow (`GET`/`PUT /api/recipients/{type}/{id}/notification-preferences`). The seed includes a synthetic owner, `o_101` (Maria Becker). Delivery failures are recorded on the notification and never stop the case flow.
 
 ### Choose where messages go
 

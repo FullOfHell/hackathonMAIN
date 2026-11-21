@@ -3,7 +3,7 @@
 **Project:** Context-Aware AI Maintenance Coordinator  
 **Track:** Reltix — *Plug a Partner into centrix*  
 **Event:** MAIN Summit AI Hackathon, Maastricht, 20–21 November 2026  
-**Status:** Proposed implementation plan (not an official Reltix technical specification)  
+**Status:** Product plan with current implementation and release checklist\
 **Primary use case:** Broken heater → craftsman → booked repair → completed repair → invoice linked to unit  
 **Submission deadline:** Saturday 21 November, 10:30 (GMT+1) via BuilderBase *Hand in*: project name, code (the same version as in the demo) and a 3-minute pitch video. **Feature freeze: Saturday 06:00.** Target submit time: 10:00.
 
@@ -55,7 +55,7 @@ The track explicitly provides **no centrix API and no dataset**. We must make re
 
 **Trigger:** A resident reports that the heating in their apartment has stopped working.  
 **Partner:** A simulated heating/repair contractor.  
-**Resident channel:** Web portal (P0) plus a text-message channel with one-click links (P1, simulated outbox). Tenants mostly text and phone; younger tenants are moving to the platform. No voice agent: Reltix already has one that auto-fills the app (see `Docs/mentor-feedback.md`).  
+**Resident channel:** The portal supports typed reports and optional dictation. The simulated outbox and optional email and text transports can link residents back to My cases. A one-click booking link is planned. The project keeps the phone-agent scope described in [mentor feedback](mentor-feedback.md).\
 **Partner channel:** Lightweight partner dashboard or mock API.  
 **Result:** A booked visit, completed repair report, and invoice linked to the original property/unit/case.
 
@@ -67,9 +67,9 @@ The track explicitly provides **no centrix API and no dataset**. We must make re
 
 | Official capability | What we deliver | Priority |
 |---|---|---|
-| 1. Detect the moment | A centrix event (`maintenance.case_created`) fires from the resident's portal or text-message report. P1 (mentor-confirmed as realistic): building-wide detection, where two or more units in the same property reporting no heating within 24 h are linked to one central-heating job instead of duplicate call-outs, and all affected tenants are informed. P2: an inbound tenant email in the centrix inbox is classified into the same event. | P0 / P1 / P2 |
-| 2. Hand over context | The unit snapshot (address, unit, heating type, building year, prior heating case, access details such as caretaker or key safe) is pre-filled into the partner job. The tenant only adds symptoms and availability. P1: optional photo upload, attached to the job; AI describes it, but never diagnoses. | P0 / P1 |
-| 3. Hold the conversation | Portal chat (P0). Text-message channel (P1): the resident receives a pre-filled message with one-click links to confirm a slot or follow the case, continuing the same case as the portal. Partner side: partner dashboard (P0). No voice agent; Reltix already has one. | P0 / P1 |
+| 1. Detect the moment | A centrix event (`maintenance.case_created`) fires when the tenant saves a portal report. P1 (mentor-confirmed as realistic): building-wide detection, where two or more units in the same property reporting no heating within 24 h are linked to one central-heating job instead of duplicate call-outs, and all affected tenants are informed. P2: an inbound tenant email in the centrix inbox is classified into the same event. | P0 / P1 / P2 |
+| 2. Hand over context | The portal pre-fills address, unit and known heating type and shares fields covered by consent. The connector can carry approved prior repair and access context. Photo upload remains optional backlog work. | P0 / P1 |
+| 3. Hold the conversation | The resident uses the portal, optionally with dictation. The contractor uses its own dashboard and sees only its approved jobs. Optional notification transports can link back to My cases. | P0 / P1 |
 | 4. Close the loop | Appointment, completion report and invoice are linked to the case and unit. Tenant and manager are updated at every transition. P1: centrix approves repair costs up to €3,000; invoices above €3,000 are flagged for manager approval instead of closing silently. | P0 / P1 |
 
 Trigger event, in the same shape as the brief's example payload:
@@ -93,7 +93,7 @@ Trigger event, in the same shape as the brief's example payload:
 
 ### Definition of done — the vertical slice
 
-A tester can: **report broken heating → create a persistent case → share the necessary context → send a job via n8n → receive partner slots → confirm a slot → simulate repair completion → attach an invoice → see the final result in the tenant and manager views.** All statuses must derive from persisted backend records, not hard-coded visual progress.
+A tester can **report broken heating → review priority and save availability → approve sharing with the named contractor → confirm the contractor received one job → book a tenant slot → complete the repair and attach an invoice → see the outcome on the original unit**. Dispatch can use the provider-neutral n8n workflow or direct connector calls. All statuses must derive from persisted backend records, not hard-coded visual progress.
 
 ---
 
@@ -101,20 +101,16 @@ A tester can: **report broken heating → create a persistent case → share the
 
 ```mermaid
 flowchart TD
-    A[Resident opens portal / replies to text message] --> B[Report: no heating]
-    B --> C[AI extracts issue and asks only missing questions]
-    C --> D[Look up unit and previous heating cases]
-    D --> E[Show context and request approval for partner hand-off]
-    E --> F[Create repair case and emit event]
-    F --> G[n8n routes job through generic partner connector]
-    G --> H[Mock partner receives order and proposes slots]
-    H --> I[Resident confirms a slot]
-    I --> J[Partner marks work completed and uploads invoice]
-    J --> K[Backend links invoice and outcome to centrix unit]
-    K --> L[Notify resident; show resolved case timeline]
+    A[Tenant types or dictates a heating report] --> B[Review the issue and priority and save availability]
+    B --> C[Save the report and show its proposed contractor]
+    C --> D[Tenant approves the sharing preview]
+    D --> E[Direct connector or n8n dispatches one approved job]
+    E --> F[Assigned contractor accepts and books a saved time]
+    F --> G[Contractor starts and completes the repair]
+    G --> H[Invoice and appointment appear on the original case and unit]
 ```
 
-**Critical distinction:** A job is *not* complete when the AI says “I've booked it” or when the partner is contacted. The backend must receive an actual simulated partner acceptance and later a completion event before advancing states.
+A repair outcome appears only after FastAPI persists the corresponding booking, completion or invoice action. If no saved time is available to book, the tenant can update availability in My cases and the contractor can refresh.
 
 ### Suggested state machine
 
@@ -127,8 +123,6 @@ AWAITING_SHARING_APPROVAL
    ↓
 PARTNER_REQUESTED
    ↓
-SLOTS_OFFERED
-   ↓
 SCHEDULED
    ↓
 IN_PROGRESS
@@ -138,21 +132,11 @@ COMPLETED
 CLOSED
 ```
 
-Support explicit alternate branches: `DECLINED`, `NO_PROVIDER_AVAILABLE`, `CANCELLED`, `NEEDS_HUMAN_REVIEW`, `FAILED`. Do not allow arbitrary jumps. Persist every transition as an event with timestamp and actor.
+The contractor-offer path passes through `SLOTS_OFFERED` before `SCHEDULED`. Support explicit alternate branches: `DECLINED`, `NO_PROVIDER_AVAILABLE`, `CANCELLED`, `NEEDS_HUMAN_REVIEW`, `FAILED`. Do not allow arbitrary jumps. Persist every transition as an event with timestamp and actor.
 
-### Example live demo script (2–3 minutes, target)
+### Recording the live demo
 
-1. Begin on a seeded tenant's property page. It shows an apartment with gas central heating and an older repair case.
-2. Type or say, “My heating has stopped working.”
-3. Agent asks one or two follow-up questions; demonstrate that address and heating type were auto-filled.
-4. Show partner hand-off details and approve sharing the minimum required information.
-5. Submit; show n8n run and the job appearing in the contractor's dashboard.
-6. Contractor offers two slots; tenant chooses one.
-7. Contractor marks repair complete and uploads a demo invoice.
-8. Switch to manager/unit view: show exact case, partner, appointment, invoice, tenant notification and event timeline.
-9. Briefly show the connector interface and explain how a second contractor plugs in.
-
-**Always have a local fallback** for unreliable venue internet: the portal flow must work without n8n or OpenAI.
+Follow the [three-minute script](demo-script.md) with one test case. Rehearse typed intake and direct dispatch first. Show optional integrations only after verifying the same repair on the chosen demo configuration.
 
 ---
 
@@ -311,19 +295,9 @@ Show the data source in the manager view. Do not tell the tenant that the earlie
 
 ### C. Partner matching
 
-For the MVP, use **deterministic rules**, not a complex learned recommender:
+Eligible providers are active, registered delivery contractors for the case category and trigger. Heating repairs try contractors in the repair city first, then an available contractor in another city in the same country using a stable random order per case.
 
-1. Filter by supported service category (`heating_repair`).
-2. Filter by serviced location/region.
-3. Filter by capacity/available slots.
-4. Rank by earliest available slot, with cost or priority as a tie-breaker.
-5. Escalate when no provider qualifies.
-
-A possible transparent scoring heuristic (only among eligible providers) is:
-
-`match_score = 0.65 * availability_score + 0.20 * distance_score + 0.15 * price_score`
-
-These weights are **our proposal**, not an official Reltix algorithm. For one partner, use the same routing interface so the architecture is demonstrably extensible.
+Availability checks the tenant's saved time windows against existing bookings. FastAPI rechecks the named recipient before approval. When no provider qualifies, the report stays saved and the tenant can check again later. See [contractor matching](connector-spec.md#contractor-matching).
 
 ### D. AI safety boundaries
 
@@ -335,61 +309,23 @@ These weights are **our proposal**, not an official Reltix algorithm. For one pa
 
 ### E. n8n workflows
 
-**Workflow 1: Sharing approved**
+The provider-neutral workflow receives `maintenance.sharing_approved` and a case ID. It validates the event and calls the authenticated FastAPI dispatch gateway. FastAPI reads the saved order and consent, dispatches to the selected contractor and returns the job ID and duplicate flag. The optional legacy workflow sends an approved order to the HeatFix adapter. Partner timeline callbacks go directly to FastAPI.
 
-```text
-Authenticated webhook: maintenance.sharing_approved with the approved connector order
-  → Validate event, case ID and idempotency key
-  → HTTP Request: POST approved order to generic partner connector
-  → Return the job ID to FastAPI for persistence
-```
-
-**Workflow 2: Partner responds**
-
-```text
-Webhook: signed partner event
-  → Validate signature + event ID
-  → Switch on event type
-  → HTTP Request: apply valid transition in FastAPI
-  → Notify tenant of slots, appointment or completion
-  → Ensure invoice/report document is linked to original case
-```
-
-Keep all sensitive tokens in n8n credentials/environment secrets. Avoid hard-coded API keys and resident data in workflow definitions committed to Git.
+Keep credentials in n8n or the backend environment. See the [workflow setup](../n8n/README.md) for direct dispatch and local rehearsal.
 
 ---
 
-## 7. UI screens — only what is needed
+## 7. UI screens
 
-### Screen A — Tenant portal (P0)
+| View | Implemented workflow |
+|---|---|
+| Tenant Report | Describe, Summary and Approve. Enter text or review a dictated transcript, edit the issue and priority, save at least one future slot, and approve sharing with the named contractor. Edit saved profile and home details in place. |
+| Tenant My cases | View status, local appointment time, milestones, repair result and downloadable invoice. Update availability while awaiting booking. The bell shows contractor acceptance, decline and completion. |
+| Contractor inbox | Switch providers by name in the header. Review the approved job, accept or decline, book one of the tenant’s saved times, then start work, complete the repair and attach the demo invoice. The bell shows the selected provider’s assigned jobs. |
+| Manager | Register or deactivate contractors. Open any active contractor’s inbox and expand repair groups to see appointments, consent, outcomes and timelines. |
+| Notification outbox | Inspect persisted simulated delivery through the notifications API. Optional email and phone delivery can link to My cases. The dedicated booking link remains planned. |
 
-- Unit and resident context already selected for demo.
-- Chat-like issue entry, single primary action; no long form.
-- AI asks only missing questions and displays an editable confirmation summary.
-- Clear notice of partner and fields being shared; approval step.
-- Appointment choices and confirmation.
-- Real case timeline, status and completion notification.
-
-### Screen B — Partner dashboard (P0)
-
-- Incoming jobs queue with relevant property/issue context.
-- Accept/reject job and provide slots.
-- Mark job in progress, then complete.
-- Attach invoice or simulated invoice record.
-
-### Screen C — centrix manager / unit view (P0)
-
-- Unit details, existing cases, case history and communications.
-- Current service partner, status history, appointment and invoice attachment.
-- Evidence of what tenant approved for partner sharing.
-
-### Screen D — Text-message outbox (P1)
-
-- Shows the simulated SMS/email messages sent to the resident at each step (request received, slots offered, appointment confirmed, repair done).
-- Each message has one-click links (confirm slot, view case) that call the same backend endpoints as the portal.
-- Messages are persisted and linked to the case; nothing is really sent.
-
-**Do not prioritize:** complex analytics, payment processing, full landlord administration, authentication for many organizations, fancy map views, dozens of service types, real contractor marketplaces.
+The screens share the same color palette, status styles and dropdown controls. The tenant calendar is part of Summary.
 
 ---
 
@@ -397,37 +333,44 @@ Keep all sensitive tokens in n8n credentials/environment secrets. Avoid hard-cod
 
 ### P0 — must be working for a competitive submission
 
-- [ ] Set up repository, development commands, environment variables and shared API contracts.
-- [ ] Create synthetic property/unit/resident/history records in SQLite.
-- [ ] Define case state machine and immutable case-event history.
-- [ ] Implement FastAPI case CRUD and required actions.
-- [ ] Build resident text/chat flow with minimal questions.
-- [ ] Add issue extraction with strict JSON validation; provide deterministic fallback.
-- [ ] Build sharing/approval screen and store approval record.
-- [ ] Implement generic partner adapter and one mock heating contractor.
-- [ ] Build basic partner dashboard with booking and completion controls.
-- [ ] Connect n8n workflow to the backend and partner API.
-- [ ] Persist appointment, completion report and invoice on the same case/unit.
-- [ ] Build manager/unit case timeline.
-- [ ] Write connector specification including schema, auth, idempotency, events and errors.
-- [ ] Run and record end-to-end demo with the actual running stack.
+See the [implementation and verification checklist](TODO.md) for feature ownership and the exact release status.
+
+- [x] Set up repository, development commands, environment variables and shared API contracts.
+- [x] Create synthetic property/unit/resident/history records in SQLite.
+- [x] Define case state machine and immutable case-event history.
+- [x] Implement FastAPI case creation, reads, draft edits and workflow actions.
+- [x] Build resident text/chat flow with minimal questions.
+- [x] Add issue extraction with strict JSON validation; provide deterministic fallback.
+- [x] Build sharing/approval screen and store approval record.
+- [x] Implement generic partner adapter and one mock heating contractor.
+- [x] Build basic partner dashboard with booking and completion controls.
+- [x] Connect n8n to the backend and partner API and rehearse it locally. Shared-environment verification is pending.
+- [x] Persist appointment, completion report and invoice on the same case/unit.
+- [x] Build manager/unit case timeline.
+- [x] Write connector specification including schema, auth, idempotency, events and errors.
+- [x] Rehearse the end-to-end demo in the browser on the running stack.
+- [ ] Record the final demo and verify it matches the submitted code.
 
 ### P1 — high-value differentiation, only after P0 works
 
-- [ ] Building-wide outage detection (mentor-confirmed; first differentiator).
-- [ ] Text-message channel: simulated outbox with one-click slot confirmation, same case as the portal.
-- [ ] Cost warning: invoices above €3,000 flagged for manager approval (centrix approves up to €3,000).
-- [ ] Internet partner through the connector: capabilities registration plus spec walkthrough (move-in → offer → contract → unit). Minimal flow only if time allows.
-- [ ] Context-aware previous-repair reference with source attribution.
-- [ ] One failure branch: partner rejects or has no available slots, then graceful escalation.
-- [ ] (Lower priority) Demonstrate a second simulated repair provider using the same connector contract. Adding it should require only a provider registration (capabilities, region, endpoint) and an adapter, with no change to case-domain code. Show this in the video.
-- [ ] Building-wide outage rule details: deterministic rule (≥2 units, same property, `heating_repair`, within 24 h) links cases to one partner job and notifies all affected tenants.
-- [ ] Access details and photos in the partner job (caretaker/key-safe info from seed data; optional photo upload).
+- [x] Implement building-wide outage detection in the backend. The two-unit browser view is pending.
+- [x] Persist a simulated notification outbox with links to My cases.
+- [ ] Add a direct one-click slot confirmation link.
+- [x] Flag invoices above €3,000 for manager review in the backend.
+- [ ] Add the manager approval action to the portal.
+- [x] Internet partner through the connector: capabilities registration plus spec walkthrough (move-in → offer → contract → unit). Minimal flow only if time allows.
+- [x] Support the previous-repair reference and source attribution in the connector API.
+- [x] One failure branch: partner rejects or has no available slots, then graceful escalation.
+- [x] Add a second simulated repair provider in Manager using the same connector contract and scope each inbox to its provider.
+- [ ] Include the second provider briefly in the video if time permits.
+- [x] Support consented access details in the connector payload.
+- [ ] Add optional access details and repair photos to the tenant workflow.
 
 ### P2 — explicitly optional
 
 - [ ] Full internet move-in flow end to end (beyond registration and spec).
-- [ ] Resident messaging/email integration beyond on-screen notifications.
+- [x] Provide email and phone notification transports.
+- [ ] Verify live delivery in the shared demo if used.
 - [ ] Smarter multi-provider optimization or cost comparison.
 - [ ] Operational dashboard and analytics.
 
@@ -475,11 +418,7 @@ The team works through the night with staggered naps. Owners follow the table ab
 
 ### 3-minute video outline
 
-1. **0:00–0:15** Problem: a broken heater takes a dozen calls and emails.
-2. **0:15–1:45** The flow: report (portal or text message) → context pre-filled → approval → partner receives job → slot booked → completion and invoice → unit view and timeline.
-3. **1:45–2:15** One differentiator that is stable at freeze: building-wide detection (mentor-confirmed), plus the €3,000 cost warning if stable.
-4. **2:15–2:40** Connector spec, and an internet partner plugged in without changing case logic (Reltix's own ask).
-5. **2:40–3:00** Why heating repair, measurable value, what is simulated.
+Use the [timed demo script](demo-script.md). Follow one report from the tenant’s first sentence through consent, the selected contractor’s inbox, booking and invoice. End on the original unit and use the last few seconds to describe the reusable connector.
 
 ### Suggested repo layout
 
@@ -555,13 +494,13 @@ reltix-hackathon/
 
 ## 12. Final hand-in package
 
-- [ ] Runnable prototype and startup instructions (`README.md`).
-- [ ] One reliable, repeatable live demo (resident → partner → resolved unit case).
-- [ ] Exported n8n workflows with safe configuration instructions.
-- [ ] `Docs/connector-spec.md` with endpoints, schemas, auth, retries, events and errors.
-- [ ] `Docs/assumptions.md` explaining synthetic data and simulated endpoints.
+- [x] Runnable prototype and [startup instructions](../readme.md).
+- [x] Repeatable local browser demo from report through invoice and unit history.
+- [x] Exported n8n workflows with safe configuration instructions.
+- [x] `Docs/connector-spec.md` with endpoints, schemas, auth, retries, events and errors.
+- [x] `Docs/assumptions.md` explaining synthetic data and simulated endpoints.
 - [ ] BuilderBase hand-in: project name, code (same version as in the demo, tagged `demo-final`) and a 3-minute pitch video. Submit by 10:00; hard deadline 10:30 (GMT+1).
-- [ ] A small test suite or test evidence for the happy path and major edge cases.
+- [x] Automated and browser test evidence for the happy path and key failure cases.
 - [ ] Pitch covering problem, why heating repairs, approach, architecture, UX and measurable value.
 
 ### Suggested pitch structure
@@ -572,14 +511,9 @@ reltix-hackathon/
 4. **Differentiation:** Context-aware, minimal effort, closed-loop orchestration and provider-neutral connectors.
 5. **Feasibility:** Clear demo assumptions, consent/approval, auditable statuses and next integration steps.
 
-### Next steps (as of Friday 15:30)
+### Remaining release work
 
-1. Agree on **broken heater → repair partner** as the only required service flow, and pick the project name (required for submission).
-2. Freeze `/api/cases`, `/api/units/{unit_id}/context`, partner `POST /jobs`, and the callback contract; commit shared example JSON.
-3. Collect API access: OpenAI key (BuilderBase → Resources → Reveal), n8n link (file in BuilderBase Resources). Document variable names in `.env.example`; never commit values.
-4. Before 18:00, test the network risk: the n8n webhook reaching the backend through a public HTTPS tunnel. (ElevenLabs dropped after mentor feedback.)
-5. Seed one tenant/unit, one historical heating case, access details and one contractor.
-6. Implement the first vertical slice: **create persistent case → mock partner receives job**.
+See [Final hand-in](TODO.md#final-hand-in) for the current checklist. Freeze the exact recording version, rehearse any integrations shown in the video and verify that judges can access the submitted code.
 
 ---
 

@@ -1,32 +1,36 @@
-# React + TypeScript + Vite
+# centrix portal
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This React and TypeScript app connects the tenant, contractor and manager views to FastAPI. See the [repository startup instructions](../readme.md) and [demo script](../Docs/demo-script.md).
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+From `frontend/`, run the commands below with the backend running at the configured address.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+VITE_API_BASE_URL=http://localhost:8000 npm run dev -- --port 5173 --strictPort
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Set `VITE_API_BASE_URL` in `.env.local` to keep the API address between sessions. With no API URL, fixture mode offers a simulated report and job flow. The calendar and booking are simulated in fixture mode. Provider registration and voice transcription require FastAPI.
+
+## Views
+
+| Route | What to test |
+|---|---|
+| `#report` | Type or dictate a report, review symptoms and priority, save a future calendar slot, and approve the fields for the assigned contractor. The progress bar follows Describe, Summary and Approve. Address, unit, heating type and contact details are editable in **Your home**. |
+| `#cases` | Expand a report to see status, confirmed appointment, repair timeline and invoice. Update your availability while the repair is waiting for an appointment. |
+| `#inbox` or `#inbox/<slug>` | Choose the contractor in the header. Accept or reject a job, book one of the tenant’s saved times, start and complete the repair, then confirm a demo invoice. |
+| `#manager` | Add contractors by name, city and inbox slug. **Delete** deactivates the contractor after confirmation and hides its repair group from Manager. Existing case history is retained. **Open inbox** opens the selected provider’s jobs. |
+
+The tenant bell shows acceptance, decline and completion. Each contractor bell shows that provider’s relevant new jobs. Clicking a message marks it read while the panel stays open. Availability is saved by week. At least one future unbooked slot in any of the three displayed weeks is required to continue. If no saved times are available to book, the tenant can add more through My cases.
+
+Report draft saves, profile saves, transcription, contractor registration, visit booking, completion and invoice submission run immediately. **Approve and send** offers **Undo** and **Send now** for the final handoff.
+
+## Verification
+
+```bash
+npm test
+npm run build
+```
+
+For a browser rehearsal, open the connected portal with a fresh synthetic database and follow the [demo script](../Docs/demo-script.md).

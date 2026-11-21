@@ -1,10 +1,10 @@
 # Shared fixtures
 
-These JSON files are the temporary contract between frontend, backend and integrations while the APIs are being implemented.
+These JSON files are contract examples shared by the frontend, backend and integrations.
 
 - `unit-context.json` represents `GET /api/units/{unit_id}/context`.
 - `case-create.json` represents `POST /api/cases` input.
-- `case-response.json` represents a newly persisted case.
+- `case-response.json` represents a newly persisted case with its priority, contractor name and sharing preview.
 - `building-repair.json` is the `building_repair` field on a linked unit's case after the dispatch resident books the shared visit.
 - `sharing-approval.json` represents `POST /api/cases/{case_id}/sharing-approval` input.
 - `partner-job.json` represents connector v1 job creation.

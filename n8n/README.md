@@ -6,11 +6,11 @@ Import [connector-dispatch.json](connector-dispatch.json) once. **Sharing approv
 
 Publish the workflow. Set its Production URL in `N8N_CONNECTOR_WEBHOOK_URL`, the inbound credential value in `N8N_WEBHOOK_SECRET`, and the outbound credential value in `CONNECTOR_DISPATCH_SECRET` in `backend/.env`, then restart FastAPI. The generic URL takes precedence over the legacy URL.
 
-FastAPI sends `event: maintenance.sharing_approved` and `case_id`. The workflow sends only `case_id` to the fixed gateway. The gateway looks up the saved approval, order, and selected provider, then calls that provider's connector and returns `case_id`, `job_id`, and `duplicate`. Registering another delivery provider needs no edits to the workflow. See [the connector spec](../Docs/connector-spec.md#adding-a-delivery-provider).
+After the tenant approves sharing to the named contractor, FastAPI sends `event: maintenance.sharing_approved` and `case_id`. Saving a report or its availability alone does not trigger dispatch. The workflow sends only `case_id` to the fixed gateway. The gateway looks up the saved approval, order, and selected provider, then calls that provider's connector and returns `case_id`, `job_id`, and `duplicate`. Registering another delivery provider needs no edits to the workflow. Booking, completion and invoice updates go through the FastAPI scheduling and callback endpoints. To run the direct demo path, start FastAPI with both webhook URLs empty. A configured webhook without its matching secret fails dispatch. See [the connector spec](../Docs/connector-spec.md#adding-a-delivery-provider).
 
 ## Legacy HeatFix-only workflow
 
-## Set up n8n Cloud
+### Set up n8n Cloud
 
 1. Make `POST /partners/heatfix/connector/jobs` reachable from n8n Cloud over HTTPS. For a local demo, put a tunnel in front of an authenticated proxy that forwards only that method and path to FastAPI. Configure the proxy to require a random secret in `X-HeatFix-Demo-Secret`. If the tunnel URL changes, update the HeatFix URL in n8n.
 2. Import `sharing-approved.json` using **Import from File** in the n8n workflow editor. In **Create or reuse HeatFix job**, set the HTTPS URL from step 1. For the proxy setup, choose **Generic Credential Type** → **Header Auth** and configure `X-HeatFix-Demo-Secret` with the proxy's secret. [n8n import guide](https://docs.n8n.io/build/manage-workflows/export-and-import/)

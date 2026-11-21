@@ -77,6 +77,17 @@ test('fixture context and new consent share one resident while earlier jobs keep
     [next.id, changes.address, changes.unit],
     [initial.id, originalJob.payload.property.address, originalJob.payload.property.unit],
   ])
+
+  const week = await api.getAvailability(resident.unit_id, resident.id, 1)
+  const [chosen, unchosen] = week.slots
+  await api.saveAvailability(resident.unit_id, resident.id, week.week_start, [chosen.start])
+  assert.equal((await api.getJobAvailability('heatfix', newJob.id, 1)).can_book, false)
+  await api.updatePartnerJob('heatfix', newJob.id, { action: 'accept' })
+  assert.deepEqual((await api.getJobAvailability('heatfix', newJob.id, 1)).slots.map((slot) => slot.start), [chosen.start])
+  await assert.rejects(api.bookTenantVisit('heatfix', newJob.id, unchosen.start), /no longer available/)
+  const appointment = await api.bookTenantVisit('heatfix', newJob.id, chosen.start)
+  assert.equal(appointment.start, chosen.start)
+  assert.deepEqual((await api.getCase(next.id)).appointment, appointment)
 })
 
 test('an intake result without extracted heating symptoms proceeds to the editable summary', async (t) => {

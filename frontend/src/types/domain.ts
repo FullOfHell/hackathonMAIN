@@ -263,7 +263,7 @@ export interface ContractorTimetableWeek extends TimetableWeek {
   appointment: MaintenanceCase['appointment']
 }
 
-export type PartnerAction = 'accept' | 'reject' | 'offer-slots' | 'start' | 'complete' | 'invoice'
+export type PartnerAction = 'accept' | 'reject' | 'start' | 'complete' | 'invoice'
 
 export type PartnerCommand =
   | { action: Exclude<PartnerAction, 'complete' | 'invoice'>; body?: never }
