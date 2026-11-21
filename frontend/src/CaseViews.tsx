@@ -1,21 +1,35 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, invoiceUrl } from './api/client'
+import { useActionFeedback, useBeforeSend } from './actionFeedback'
 import { caseStatusLabel, formatTime, slotLabel, timelineEventLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
 
 export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revision?: number }) {
+  const notify = useActionFeedback()
+  const manual = useRef(false)
   const [events, setEvents] = useState<CaseEvent[]>()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let active = true
     api.getCaseEvents(caseId).then(
-      (result) => { if (active) { setEvents(result); setFailed(false) } },
-      () => { if (active) setFailed(true) },
+      (result) => {
+        if (!active) return
+        setEvents(result)
+        setFailed(false)
+        if (manual.current) notify('success', 'Timeline refreshed.')
+        manual.current = false
+      },
+      () => {
+        if (!active) return
+        setFailed(true)
+        if (manual.current) notify('error', 'Timeline could not be loaded.')
+        manual.current = false
+      },
     )
     return () => { active = false }
-  }, [caseId, revision, attempt])
+  }, [caseId, revision, attempt, notify])
   const milestones = events?.flatMap((event) => {
     const label = timelineEventLabel(event)
     return label ? [{ ...event, label }] : []
@@ -24,7 +38,7 @@ export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revisio
     <section aria-label="Case timeline">
       <h3>Case timeline</h3>
       {failed && <p role="alert">Timeline unavailable. <button className="secondary chip"
-        onClick={() => { setFailed(false); setAttempt((value) => value + 1) }}>Retry timeline</button></p>}
+        onClick={() => { manual.current = true; setFailed(false); setAttempt((value) => value + 1) }}>Retry timeline</button></p>}
       {milestones ? milestones.length ? <ol className="timeline">{milestones.map((event) =>
         <li key={event.id}>
           {event.label}
@@ -56,6 +70,9 @@ export function RepairOutcome({ item }: { item: MaintenanceCase }) {
 }
 
 export function CaseProgress({ initial, active }: { initial: MaintenanceCase; active: boolean }) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
+  const manual = useRef(false)
   const [current, setCurrent] = useState(initial)
   const [refresh, setRefresh] = useState(0)
   const [refreshResult, setRefreshResult] = useState<{ revision: number; failed: boolean }>()
@@ -76,14 +93,21 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
       (result) => {
         if (reading) {
           setCurrent(result)
+          if (manual.current) notify('success', 'Case refreshed.')
+          manual.current = false
           setRefreshResult({ revision: refresh, failed: false })
           setTimelineRevision((revision) => revision + 1)
         }
       },
-      () => { if (reading) setRefreshResult({ revision: refresh, failed: true }) },
+      () => {
+        if (!reading) return
+        setRefreshResult({ revision: refresh, failed: true })
+        if (manual.current) notify('error', 'The case could not be refreshed.')
+        manual.current = false
+      },
     )
     return () => { reading = false }
-  }, [active, booking, caseId, refresh])
+  }, [active, booking, caseId, refresh, notify])
 
   async function confirm(event: FormEvent) {
     event.preventDefault()
@@ -91,15 +115,18 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
     submitting.current = true
     setBooking(true)
     setBookingError('')
-    setLockedSlot(slot.slot_id)
     try {
+      if (!await beforeSend('Book ' + slotLabel(slot) + ' · ' + caseId)) return
+      setLockedSlot(slot.slot_id)
       const response = await api.selectSlot(caseId, slot.slot_id, current.resident_id)
-      setCurrent(response)
-      if (!response.appointment) setBookingError('Appointment confirmation is pending. Retry the same slot.')
-    } catch {
-      const response = await api.getCase(caseId).catch(() => null)
+        .catch(() => api.getCase(caseId).catch(() => null))
       if (response) setCurrent(response)
-      if (!response?.appointment) setBookingError('We could not confirm the appointment. Retry to check the same slot.')
+      if (response?.appointment?.slot_id === slot.slot_id) notify('success', 'Your appointment is confirmed.')
+      else {
+        const message = 'We could not confirm that appointment. Check the case before trying again.'
+        setBookingError(message)
+        notify('error', message)
+      }
     } finally {
       submitting.current = false
       setBooking(false)
@@ -111,7 +138,7 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
     <section className="case-progress" aria-label="Appointment">
       <div className="inbox-heading">
         <h3>Appointment</h3>
-        <button className="secondary chip" disabled={booking || refreshing} onClick={() => setRefresh((value) => value + 1)}>
+        <button className="secondary chip" disabled={booking || refreshing} onClick={() => { manual.current = true; setRefresh((value) => value + 1) }}>
           {refreshing ? 'Refreshing case…' : 'Refresh case'}
         </button>
       </div>

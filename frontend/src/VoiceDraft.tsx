@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api/client'
+import { useActionFeedback, useBeforeSend } from './actionFeedback'
 
 const recordingTypes = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus']
 const maxSeconds = 30
@@ -11,6 +12,8 @@ interface VoiceDraftProps {
 }
 
 export function VoiceDraft({ remaining, disabled, onAdd }: VoiceDraftProps) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
   const [enabled, setEnabled] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'permission' | 'recording' | 'ready' | 'sending' | 'review'>('idle')
   const [audio, setAudio] = useState<Blob | null>(null)
@@ -119,13 +122,21 @@ export function VoiceDraft({ remaining, disabled, onAdd }: VoiceDraftProps) {
     setPhase('sending')
     setError('')
     try {
+      const send = await beforeSend('Transcribe recording')
+      if (version !== take.current) return
+      if (!send) {
+        setPhase('ready')
+        return
+      }
       const result = await api.transcribeRecording(audio)
       if (version !== take.current) return
       setText(result.text)
+      notify('success', 'Transcription ready to review.')
       setAudio(null)
       setPhase('review')
     } catch (failure) {
       if (version !== take.current) return
+      notify('error', 'Transcription failed. Retry or type your report.')
       setError(failure instanceof Error && failure.name !== 'TimeoutError'
         ? failure.message : 'Transcription timed out. Retry or type your report.')
       setPhase('ready')
