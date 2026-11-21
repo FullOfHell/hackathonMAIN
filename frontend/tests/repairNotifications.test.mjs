@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { timelineEventLabel } from '../src/caseDisplay.ts'
+import { repairTimeLocation, slotLabel, timelineEventLabel } from '../src/caseDisplay.ts'
 import {
   contractorInboxHref, contractorInboxSlug, contractorNotifications, residentNotifications,
 } from '../src/repairNotifications.ts'
@@ -47,4 +47,12 @@ test('the timeline shows permission and repair milestones and omits internal han
   }
   assert.equal(timelineEventLabel({ type: 'sharing.approved' }), 'Tenant gave permission to send repair details')
   assert.equal(timelineEventLabel(state('SLOTS_OFFERED')), 'Contractor offered appointment times')
+})
+
+test('appointments show a date, local time range and the repair city', () => {
+  const city = repairTimeLocation('Demo Street 12, 40210 Düsseldorf, Germany')
+  assert.equal(slotLabel({ start: '2026-11-21T08:00:00Z', end: '2026-11-21T10:00:00Z' }, city),
+    '21 Nov 2026, 09:00 → 11:00 (Düsseldorf time)')
+  assert.equal(slotLabel({ start: '2026-07-21T21:30:00Z', end: '2026-07-21T22:30:00Z' }),
+    '21 Jul 2026, 23:30 → 22 Jul 2026, 00:30 (Germany time)')
 })

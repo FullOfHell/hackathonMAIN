@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { contactChannels, profileChanges } from './api/client'
+import { profileChanges } from './api/client'
+import { FieldDropdown } from './PortalDropdown'
 import type { Resident, ResidentHomeDetails, ResidentProfileChanges, ResidentProfileDraft } from './types/domain'
 
 interface Props {
@@ -68,13 +69,10 @@ export function ResidentProfileEditor({ resident, homeDetails, saving, blocked, 
         onChange={(event) => setDraft({ ...draft, email: event.target.value })} /></label>
       <label>Phone<input type="tel" autoComplete="tel" required={Boolean(resident.phone)} maxLength={40} value={draft.phone}
         onChange={(event) => setDraft({ ...draft, phone: event.target.value })} /></label>
-      <label>Preferred contact channel<select value={draft.preferred_contact}
-        onChange={(event) => setDraft({ ...draft, preferred_contact: event.target.value })}>
-        {!(contactChannels as readonly string[]).includes(resident.preferred_contact ?? '') &&
-          <option value={resident.preferred_contact ?? ''} disabled>{resident.preferred_contact || 'Choose a channel'}</option>}
-        <option value="portal">Portal</option><option value="email">Email</option>
-        <option value="phone">Phone (text message)</option>
-      </select></label>
+      <FieldDropdown label="Preferred contact channel" value={draft.preferred_contact} disabled={saving || blocked}
+        options={[{ value: 'portal', label: 'Portal' }, { value: 'email', label: 'Email' },
+          { value: 'phone', label: 'Phone (text message)' }]}
+        onChange={(preferred_contact) => setDraft({ ...draft, preferred_contact })} />
       <label>Address<input autoComplete="street-address" required maxLength={200} value={draft.address}
         onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label>
       <label>Unit<input autoComplete="address-line2" required maxLength={80} value={draft.unit}

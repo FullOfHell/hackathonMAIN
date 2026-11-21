@@ -30,13 +30,13 @@ UNAPPROVED_REPAIR_STATES = {CaseStatus.AWAITING_SHARING_APPROVAL, CaseStatus.NO_
 
 
 def _current_contractor(conn, case):
-    """Re-evaluate the address and contractor ranking before sharing."""
+    """Re-evaluate the address and contractor availability before sharing."""
     ctx = svc.unit_context(conn, case["unit_id"])
     resident = next((r for r in ctx["residents"] if r["id"] == case["resident_id"]), None)
     if not resident:
         return None
     region = svc.repair_region(conn, ctx, resident)
-    partner = svc.select_partner(conn, case["issue_type"], region, resident.get("address") or ctx["property"]["address"])
+    partner = svc.select_partner(conn, case, region)
     return partner["id"] if partner else None
 
 
@@ -47,8 +47,10 @@ def _with_sharing_request(conn, case):
         if partner_id != case["partner_id"]:
             case["partner_id"] = partner_id
             case["building_repair"] = None
+        case["contractor_name"] = None
         if partner_id:
             partner = conn.execute("SELECT id, name FROM partners WHERE id=?", (partner_id,)).fetchone()
+            case["contractor_name"] = partner["name"]
             case["sharing_request"] = {"partner": dict(partner), **sharing_policy(conn, partner_id)}
     return case
 
@@ -97,7 +99,7 @@ def get_unit_cases(unit_id: str, conn=Depends(get_db)):
 @router.get("/manager/repairs")
 def list_manager_repairs(conn=Depends(get_db)):
     conn.execute("BEGIN")
-    contractors = dict(conn.execute("SELECT id,name FROM partners"))
+    contractors = dict(conn.execute("SELECT id,name FROM partners WHERE active=1"))
     rows = conn.execute(
         "SELECT c.id,u.unit_label,p.address,r.address AS resident_address,r.unit AS resident_unit,"
         "json_extract(o.payload,'$.property.address') AS approved_address,"
@@ -108,6 +110,8 @@ def list_manager_repairs(conn=Depends(get_db)):
     groups = {}
     for row in rows:
         case = _with_sharing_request(conn, svc.get_case(conn, row["id"]))
+        if case["partner_id"] is not None and case["partner_id"] not in contractors:
+            continue
         pending = case["status"] in UNAPPROVED_REPAIR_STATES and not case["sharing_approval"]
         address = row["approved_address"] or (row["resident_address"] if pending else None) or row["address"]
         unit = row["approved_unit"] or (row["resident_unit"] if pending else None) or row["unit_label"]
@@ -140,16 +144,16 @@ def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(g
                      {"channel": body.source_channel, "issue_type": body.issue_type, "unit_id": body.unit_id})
     svc.transition(conn, case_id, CaseStatus.TRIAGED, "system")
     region = svc.repair_region(conn, ctx, resident)
-    partner = svc.select_partner(conn, body.issue_type, region, resident.get("address") or ctx["property"]["address"])
+    partner = svc.select_partner(conn, {"id": case_id, "resident_id": resident["id"], "issue_type": body.issue_type}, region)
     if partner:
         conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner["id"], case_id))
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
-                       {"partner_id": partner["id"], "reason": "contractor matching for service and region"})
-        if svc.normalize_location(region) == svc.normalize_location(ctx["property"]["region"]):
+                       {"partner_id": partner["id"], "reason": "contractor matching for city and availability"})
+        if region and svc.normalize_location(region) == svc.normalize_location(ctx["property"]["region"]):
             outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
     else:
         svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system",
-                       {"reason": "no active partner covers this service and region"})
+                       {"reason": "no active contractor has availability for this repair"})
     conn.commit()
     outages.confirm_scope(conn, case_id, partner_client)
     return _with_sharing_request(conn, svc.get_case(conn, case_id))
@@ -234,7 +238,7 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         if case["status"] in UNAPPROVED_REPAIR_STATES:
             partner_id = _current_contractor(conn, case)
             if not partner_id:
-                raise HTTPException(409, "No contractors available for this service and repair address.")
+                raise HTTPException(409, "No contractors available for this repair.")
             previewed_partner = case["partner_id"] if body.expected_partner_id is None else body.expected_partner_id
             if previewed_partner != partner_id:
                 raise HTTPException(409, "The contractor changed. Review the sharing details again.")

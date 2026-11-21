@@ -85,7 +85,13 @@ test('an intake result without extracted heating symptoms proceeds to the editab
     server: { middlewareMode: true, hmr: false, watch: null, ws: false },
   })
   t.after(() => server.close())
-  const { nextIntakeFollowUp } = await server.ssrLoadModule('/src/intake.ts')
-  assert.equal(nextIntakeFollowUp({ missing_information: ['heating_symptom', 'availability_preferences'] }, new Set(), 42), undefined)
-  assert.equal(nextIntakeFollowUp({ missing_information: ['hot_water_affected'] }, new Set(), 42), 'hot_water_affected')
+  const { makeIntakeReview, nextIntakeFollowUp } = await server.ssrLoadModule('/src/intake.ts')
+  const draft = { report: 'All radiators are cold.', hot_water_affected: null }
+  assert.equal(makeIntakeReview(draft).urgency, 'normal')
+  const reviewed = makeIntakeReview(draft, { urgency: 'high', symptoms: [], availability_preferences: [] })
+  assert.equal(reviewed.urgency, 'high')
+  assert.equal(reviewed.description, draft.report)
+  assert.equal(nextIntakeFollowUp({ missing_information: ['heating_symptom', 'availability_preferences'] }, new Set()), undefined)
+  assert.equal(nextIntakeFollowUp({ missing_information: ['availability_preferences'] }, new Set()), undefined)
+  assert.equal(nextIntakeFollowUp({ missing_information: ['hot_water_affected'] }, new Set()), 'hot_water_affected')
 })

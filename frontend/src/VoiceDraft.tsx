@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api/client'
-import { useActionFeedback, useBeforeSend } from './actionFeedback'
+import { useActionFeedback } from './actionFeedback'
 
 const recordingTypes = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus']
 const maxSeconds = 30
@@ -12,7 +12,6 @@ interface VoiceDraftProps {
 }
 
 export function VoiceDraft({ remaining, disabled, onAdd }: VoiceDraftProps) {
-  const beforeSend = useBeforeSend()
   const notify = useActionFeedback()
   const [enabled, setEnabled] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'permission' | 'recording' | 'ready' | 'sending' | 'review'>('idle')
@@ -122,12 +121,6 @@ export function VoiceDraft({ remaining, disabled, onAdd }: VoiceDraftProps) {
     setPhase('sending')
     setError('')
     try {
-      const send = await beforeSend('Transcribe recording')
-      if (version !== take.current) return
-      if (!send) {
-        setPhase('ready')
-        return
-      }
       const result = await api.transcribeRecording(audio)
       if (version !== take.current) return
       setText(result.text)

@@ -23,19 +23,20 @@ def weekly_slots(week: int = 0, monday: date | None = None):
     return monday, slots
 
 
-def reservations(conn, resident_id, start, end, exclude_case=None):
+def reservations(conn, owner_id, start, end, exclude_case=None, *, contractor=False):
+    owner_column = "partner_id" if contractor else "resident_id"
     # The second SELECT protects the interval while a legacy local booking awaits centrix confirmation.
     return conn.execute(
-        """SELECT s.start,s.end FROM cases c JOIN appointments a ON a.case_id=c.id
+        f"""SELECT s.start,s.end FROM cases c JOIN appointments a ON a.case_id=c.id
            JOIN appointment_slots s USING (case_id,slot_id)
-           WHERE c.resident_id=? AND c.id IS NOT ? AND c.status NOT IN ('CANCELLED','FAILED','DECLINED')
+           WHERE c.{owner_column}=? AND c.id IS NOT ? AND c.status NOT IN ('CANCELLED','FAILED','DECLINED')
            AND julianday(s.start)<julianday(?) AND julianday(s.end)>julianday(?)
            UNION
            SELECT s.start,s.end FROM cases c JOIN heatfix_bookings h ON h.job_id=c.partner_job_id
            JOIN appointment_slots s ON s.case_id=c.id AND s.slot_id=h.slot_id
-           WHERE c.resident_id=? AND c.id IS NOT ? AND c.status='SLOTS_OFFERED'
+           WHERE c.{owner_column}=? AND c.id IS NOT ? AND c.status='SLOTS_OFFERED'
            AND julianday(s.start)<julianday(?) AND julianday(s.end)>julianday(?)""",
-        (resident_id, exclude_case, end, start, resident_id, exclude_case, end, start),
+        (owner_id, exclude_case, end, start, owner_id, exclude_case, end, start),
     ).fetchall()
 
 
@@ -51,3 +52,20 @@ def slot_status(conn, resident_id, slots):
         slot["booked"] = any(start < booked_end and end > booked_start for booked_start, booked_end in booked)
         slot["available"] = slot["start"] in starts
     return slots
+
+
+def repair_windows(conn, resident_id):
+    slots = [slot for week in range(CALENDAR_WEEKS) for slot in weekly_slots(week)[1]]
+    future = [slot for slot in slot_status(conn, resident_id, slots) if not slot["past"]]
+    preferred = [slot for slot in future if slot["available"]]
+    return [slot for slot in (preferred or future) if not slot["booked"]]
+
+
+def unreserved_slots(conn, partner_id, slots):
+    if not slots:
+        return []
+    occupied = [(datetime.fromisoformat(row["start"]), datetime.fromisoformat(row["end"]))
+                for row in reservations(conn, partner_id, slots[0]["start"], slots[-1]["end"], contractor=True)]
+    return [slot for slot in slots if not any(datetime.fromisoformat(slot["start"]) < end
+                                             and datetime.fromisoformat(slot["end"]) > start
+                                             for start, end in occupied)]

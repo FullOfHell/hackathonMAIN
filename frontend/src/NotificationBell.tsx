@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { formatTime } from './caseDisplay'
-import { contractorInboxHref, contractorNotifications, residentNotifications } from './repairNotifications'
+import { contractorNotifications, residentNotifications } from './repairNotifications'
 import type { RepairNotification } from './repairNotifications'
 
 interface Props {
@@ -44,7 +44,6 @@ export function NotificationBell({ partnerSlug, unitId }: Props) {
   const bell = useRef<HTMLButtonElement>(null)
   const seen = new Set(read)
   const unread = items?.filter((item) => !seen.has(item.id)) ?? []
-  const destination = partnerSlug ? contractorInboxHref(partnerSlug) : '#cases'
 
   useEffect(() => {
     let active = true
@@ -123,17 +122,13 @@ export function NotificationBell({ partnerSlug, unitId }: Props) {
         {!!items?.length && <ul className="notification-list">
           {items.map((item) => (
             <li key={item.id}>
-              <a href={destination} className="notification-item" data-unread={!seen.has(item.id)}
-                onClick={() => {
-                  markRead([item.id])
-                  setOpen(false)
-                  bell.current?.focus()
-                }}>
+              <button type="button" className="notification-item" data-unread={!seen.has(item.id)}
+                onClick={() => markRead([item.id])}>
                 <strong>{!seen.has(item.id) && <span className="notification-unread">Unread · </span>}
                   {item.title}</strong>
                 <span>{item.message}</span>
                 <small>Case {item.caseId} · <time dateTime={item.timestamp}>{formatTime(item.timestamp)}</time></small>
-              </a>
+              </button>
             </li>
           ))}
         </ul>}

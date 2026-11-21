@@ -3,11 +3,11 @@ import json
 import re
 import sqlite3
 import uuid
-from math import asin, cos, radians, sin, sqrt
+from hashlib import sha256
 from unicodedata import combining, normalize
 
 from app.db import RESIDENT_HOME_FIELDS, now_iso
-from app.services import notifications
+from app.services import notifications, scheduling
 from app.states import CaseStatus, check_transition
 
 
@@ -88,42 +88,27 @@ def repair_region(conn: sqlite3.Connection, ctx: dict, resident: dict) -> str | 
                key=len, default=None)
 
 
-def distance_km(origin, destination) -> float:
-    lat1, lon1 = map(radians, origin)
-    lat2, lon2 = map(radians, destination)
-    haversine = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
-    return 2 * 6371 * asin(sqrt(min(1, haversine)))
-
-
-def select_partner(conn: sqlite3.Connection, service_type: str, region: str | None, address: str) -> dict | None:
-    """Rank active delivery partners covering the service and region."""
-    if region is None:
-        return None
-    region_key = normalize_location(region)
-    eligible = [dict(p) for p in conn.execute(
-        "SELECT p.*,r.profile FROM partners p JOIN partner_capabilities k ON k.partner_id=p.id "
-        "LEFT JOIN contractor_routing r ON r.partner_id=p.id "
+def select_partner(conn: sqlite3.Connection, case: dict, region: str | None) -> dict | None:
+    """Try available local contractors before a stable, per-case random order elsewhere."""
+    region_key = normalize_location(region) if region else None
+    local, elsewhere = [], []
+    for row in conn.execute(
+        "SELECT p.id,p.name,p.regions FROM partners p JOIN partner_capabilities k ON k.partner_id=p.id "
         "WHERE p.active=1 AND json_extract(k.manifest,'$.kind')='delivery' "
         "AND 'maintenance.case_created' IN (SELECT value FROM json_each(k.manifest,'$.triggers')) "
-        "AND ? IN (SELECT value FROM json_each(p.service_types)) ORDER BY p.name,p.id", (service_type,)
-    ) if any(region_key == normalize_location(area) for area in json.loads(p["regions"]))]
-    configured = [p for p in eligible if p["profile"]]
-    if len(configured) < 2:
-        return eligible[0] if eligible else None
+        "AND ? IN (SELECT value FROM json_each(p.service_types)) ORDER BY p.name,p.id", (case["issue_type"],)
+    ):
+        cities = {normalize_location(city) for city in json.loads(row["regions"])}
+        (local if region_key in cities else elsewhere).append(dict(row))
+    elsewhere.sort(key=lambda partner: sha256(f"{case['id']}:{partner['id']}".encode()).digest())
+    if not local and not elsewhere:
+        return None
 
-    origin = conn.execute("SELECT latitude,longitude FROM repair_locations WHERE address_key=?",
-                          (normalize_location(address),)).fetchone()
-
-    def rank(partner):
-        profile = json.loads(partner["profile"])
-        price_score = 100 / (100 + profile["estimated_price_eur"])
-        quality_score = (profile["quality_rating"] - 1) / 4
-        distance = distance_km(origin, (profile["latitude"], profile["longitude"])) if origin else None
-        distance_score = 5 / (5 + distance) if distance is not None else 0
-        score = 0.60 * distance_score + 0.20 * price_score + 0.20 * quality_score
-        return score, -distance if distance is not None else 0
-
-    return max(configured, key=rank)
+    slots = scheduling.repair_windows(conn, case["resident_id"])
+    for partner in local + elsewhere:
+        if scheduling.unreserved_slots(conn, partner["id"], slots):
+            return partner
+    return None
 
 
 def new_case_id() -> str:
@@ -143,7 +128,9 @@ def case_documents(conn: sqlite3.Connection, case_id: str) -> dict:
 
 
 def get_case(conn: sqlite3.Connection, case_id: str) -> dict | None:
-    row = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+    row = conn.execute(
+        "SELECT c.*,p.name AS contractor_name FROM cases c LEFT JOIN partners p ON p.id=c.partner_id WHERE c.id=?",
+        (case_id,)).fetchone()
     if not row:
         return None
     case = dict(row)

@@ -78,39 +78,29 @@ For saved local demo jobs, HTTP callback URLs on `localhost` and `127.0.0.1` can
 
 ## Adding a delivery provider
 
-In the portal, open **Manager → Contractors** to register a simulated heating contractor without restarting FastAPI. Enter the company name, service region, unique inbox slug, contractor latitude and longitude, estimated service price in euros and a 1–5 star quality rating. Use **Edit** to update an existing contractor’s matching details and **Open inbox** to see its jobs.
+In **Manager → Contractors**, enter a company name, city and unique inbox slug. **Open inbox** shows the contractor's jobs. **Delete** deactivates the contractor and removes their assigned repairs from the manager list. Existing repair records and previously issued jobs remain readable.
 
-The demo manager API lists active local delivery providers at `GET /api/manager/contractors`. `POST /api/manager/contractors` accepts `name`, `region`, `slug` and optional `routing`. The routing object contains `latitude`, `longitude`, a positive `estimated_price_eur` and an integer `quality_rating` from 1 to 5. `PUT /api/manager/contractors/{slug}/routing` accepts that object directly. List and save responses include `name`, `regions`, `slug` and `routing` when configured. The slug uses lowercase letters, digits and hyphen separators. A slug already in use returns 409. The portal form generates a local connector route and uses the built-in heating simulator.
+`GET /api/manager/contractors` lists active local delivery contractors. `POST /api/manager/contractors` accepts `name`, `region` (the city), and `slug`. The slug uses lowercase letters, digits and hyphen separators. Existing slugs return 409. `DELETE /api/manager/contractors/{slug}` returns the removed slug and can be repeated. It rejects unknown slugs with 404. A removed contractor cannot receive a new job. Replays of an existing job's idempotency key still return that job.
 
 Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
 
 1. Add a manifest in `backend/seed/partner-registrations/` with a unique `partner_id`, `kind: delivery`, a `base_url`, categories, regions, and the `maintenance.case_created` trigger. Restart FastAPI. A local `/partners/{slug}` base uses the built-in simulator. For an external provider, use the HTTPS base URL of a connector v1 adapter implementing job creation, any advertised actions, and authenticated callbacks. Put provider-specific API calls and credentials behind that adapter.
 2. Declare `address`, `unit`, and `issue` as required. The manifest can also require or allow supported consent fields. FastAPI presents those fields and validates approval before persisting the order. If the new service needs fields or outcomes outside connector v1, it needs an extension to the contract.
-3. Optionally add the same `routing` object to the registration manifest to include the provider in scoring. Use either direct dispatch or the [provider-neutral n8n workflow](../n8n/README.md#provider-neutral-workflow). The workflow forwards the approved case ID to a fixed gateway. FastAPI selects the provider, and the gateway reads the approved choice from the saved case. The partner receives the v1 order and a stable idempotency key.
+3. Use either direct dispatch or the [provider-neutral n8n workflow](../n8n/README.md#provider-neutral-workflow). The workflow forwards the approved case ID to a fixed gateway. FastAPI selects the provider, and the gateway reads the approved choice from the saved case. The partner receives the v1 order and a stable idempotency key.
 
 **Verify a new registration.** Use the manifest’s category as `issue_type` in the [case fixture](../shared/fixtures/case-create.json). Submit it to `POST /api/cases` for a unit in a covered region, confirm the expected provider was selected, then approve the fields returned in `sharing_request`. Check `{base_url}/connector/jobs` for the job. Replay the dispatch and confirm the job ID is reused. The [registration tests](../backend/tests/test_partner_registration.py) exercise this using temporary manifests for categories outside the bundled delivery demo.
 
-### Contractor ranking
+### Contractor matching
 
-FastAPI first filters by service category, coverage region, activation, delivery kind and maintenance trigger. When at least two eligible contractors have matching details, FastAPI picks the configured contractor with the highest score:
-
-```text
-score = 0.60 × 5/(5 + distance_km)
-      + 0.20 × 100/(100 + estimated_price_eur)
-      + 0.20 × (quality_rating - 1)/4
-```
-
-Distance uses straight-line kilometers and carries the most weight. Five kilometers and €100 are the reference values at which the respective components earn half their maximum. A nearby competitor can win through better price or quality. The quality input is a manager-assigned star rating, and the price is a standing service estimate. Ties favor shorter distance, then name and ID.
-
-The demo loads known repair address coordinates from `repair_locations` in `backend/seed/seed.json`. A different address uses its own coordinates when configured. If its coordinates are unavailable, matching uses price and quality. With fewer than two eligible routing profiles, FastAPI uses the legacy name and ID ordering. Ranking is refreshed until sharing approval, which fixes the recipient for dispatch and retries.
+FastAPI tries active registered delivery contractors for the selected service and trigger in the repair city first. It skips contractors with no conflict-free time and tries the remaining local contractors before considering other cities. The out-of-city order is random per case and stays stable across refreshes. The demo checks the tenant's saved future times against existing tenant and contractor bookings. If the tenant skipped availability, it checks upcoming working-hour slots. Contractors see only mutually available saved times in their inbox. FastAPI rechecks availability and the selected recipient before recording consent. Approvals keep their original recipient for dispatch and retries.
 
 When no eligible contractor remains, the portal shows **No contractors available** and keeps the report. **Check contractor availability** reopens the sharing preview for the same report if a contractor becomes available. Changes to the recipient require fresh approval before any data is sent.
 
 ### Tenant timetable for simulated delivery jobs
 
-The portal saves a tenant's selected one-hour slots through `GET` and `PUT /api/units/{unit_id}/residents/{resident_id}/availability`. Reads take a week offset from 0 to 2 and the synthetic `acting_resident_id`. Writes send the actor, the displayed Monday as `week_start`, and the selected slot starts as `available_starts`. Starts are returned as UTC timestamps. The timetable uses Monday to Friday, 09:00 to 17:00 Aachen time.
+In **Review your report**, tenants can optionally select and save one-hour slots before continuing to sharing. The portal uses `GET` and `PUT /api/units/{unit_id}/residents/{resident_id}/availability`. Reads take a week offset from 0 to 2 and the synthetic `acting_resident_id`. Writes send the actor, the displayed Monday as `week_start`, and the selected slot starts as `available_starts`. Starts are returned as UTC timestamps. The timetable uses Monday to Friday, 09:00 to 17:00 Aachen time.
 
-For a local assigned job, `GET /partners/{slug}/connector/jobs/{job_id}/tenant-availability?week=0` returns the available times after acceptance, plus the appointment if booked. `POST` to the same path with `/book` appended and a returned `start` to confirm a visit. FastAPI checks the assignment, sharing approval and slot again at booking. The case and simulated job reach scheduled status in one SQLite transaction. Repeating the same booking returns the saved appointment. The existing connector offer and confirmation endpoints still serve legacy and external workflows.
+For a local assigned job, `GET /partners/{slug}/connector/jobs/{job_id}/tenant-availability?week=0` returns the available times after acceptance, including for jobs with outstanding contractor offers, plus the appointment if booked. The inbox shows saved times across all three calendar weeks. `POST` to the same path with `/book` appended and a returned `start` to confirm a visit. FastAPI checks the assignment, sharing approval and slot again at booking. The case and simulated job reach scheduled status in one SQLite transaction. Repeating the same booking returns the saved appointment. The existing connector offer and confirmation endpoints still serve legacy and external workflows.
 
 ## Adding an internet move-in offer
 

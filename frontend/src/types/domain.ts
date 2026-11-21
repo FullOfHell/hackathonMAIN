@@ -164,6 +164,7 @@ export interface MaintenanceCase extends CreateCaseRequest {
   invoice: RepairInvoice | null
   status: CaseStatus
   partner_id: string | null
+  contractor_name?: string | null
   partner_job_id: string | null
   building_repair: {
     outage_id: string
@@ -221,25 +222,16 @@ export interface PartnerJob {
   callback_url: string
 }
 
-export interface ContractorRouting {
-  latitude: number
-  longitude: number
-  estimated_price_eur: number
-  quality_rating: number
-}
-
 export interface ContractorInput {
   name: string
   slug: string
   region: string
-  routing: ContractorRouting
 }
 
 export interface Contractor {
   name: string
   slug: string
   regions: string[]
-  routing?: ContractorRouting
 }
 
 export interface PartnerInboxJob {
@@ -247,6 +239,7 @@ export interface PartnerInboxJob {
   request_id: string
   status: string
   received_at: string
+  pending_callback?: { event_id: string; type: string } | null
   payload: PartnerJob
 }
 

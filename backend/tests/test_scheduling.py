@@ -59,14 +59,30 @@ def test_tenant_editing_and_contractor_booking_preserve_appointment(client):
     assert client.post(job + "/start").status_code == 200
 
 
+def test_contractor_can_book_saved_availability_after_offering_resident_slots(client):
+    calendar = _week(client)
+    selected = calendar["slots"][0]["start"]
+    assert _save(client, calendar, [selected]).status_code == 200
+    path, job = _job(client)
+    assert client.post(job + "/accept").status_code == 200
+    assert client.post(job + "/offer-slots").status_code == 200
+    offered = client.get(path).json()["slots"][0]
+    timetable = job + "/tenant-availability"
+    availability = client.get(timetable, params={"week": 1}).json()
+    assert availability["can_book"]
+    assert [slot["start"] for slot in availability["slots"]] == [selected]
+    booked = client.post(timetable + "/book", json={"start": selected})
+    assert booked.status_code == 200, booked.text
+    assert client.post(path + "/select-slot", json={"resident_id": "c_202", "slot_id": offered["slot_id"]}).status_code == 409
+    assert client.get(path).json()["appointment"] == booked.json()
+
+
 def test_two_assigned_contractors_cannot_book_the_same_tenant_slot(client):
     calendar = _week(client)
     start, other = (slot["start"] for slot in calendar["slots"][:2])
     assert _save(client, calendar, [start, other]).status_code == 200
     _, first = _job(client)
-    contractor = {"name": "Aachen Demo Heating", "slug": "demo-heating", "region": "Aachen",
-                  "routing": {"latitude": 50.775, "longitude": 6.083, "quality_rating": 5,
-                              "estimated_price_eur": 90}}
+    contractor = {"name": "Aachen Demo Heating", "slug": "demo-heating", "region": "Aachen"}
     assert client.post("/api/manager/contractors", json=contractor).status_code == 201
     _, second = _job(client, slug="demo-heating")
     assert client.post(first + "/accept").status_code == client.post(second + "/accept").status_code == 200
