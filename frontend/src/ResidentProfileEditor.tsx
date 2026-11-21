@@ -8,7 +8,7 @@ interface Props {
   homeDetails: ResidentHomeDetails
   saving: boolean
   blocked: boolean
-  onSave: (changes: ResidentProfileChanges) => Promise<void>
+  onSave: (changes: ResidentProfileChanges) => Promise<boolean>
 }
 
 export function ResidentProfileEditor({ resident, homeDetails, saving, blocked, onSave }: Props) {
@@ -36,8 +36,7 @@ export function ResidentProfileEditor({ resident, homeDetails, saving, blocked, 
     if (saving || blocked || !changes || !Object.keys(changes).length) return
     setError('')
     try {
-      await onSave(changes)
-      close()
+      if (await onSave(changes)) close()
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Your details could not be saved. Please try again.')
     }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useActionFeedback, useBeforeSend } from './actionFeedback'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { contractorInboxHref } from './repairNotifications'
@@ -12,6 +13,8 @@ interface Props {
 }
 
 export function ManagerContractors({ region, contractors, loadError, onAdded }: Props) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
   const [saving, setSaving] = useState(false)
   const [regionDraft, setRegionDraft] = useState<string>()
   const [error, setError] = useState('')
@@ -26,16 +29,19 @@ export function ManagerContractors({ region, contractors, loadError, onAdded }: 
     setError('')
     setAdded('')
     try {
+      if (!await beforeSend('Add contractor ' + String(fields.get('name')).trim())) return
       const contractor = await api.addContractor({
         name: String(fields.get('name')).trim(),
         slug: String(fields.get('slug')).trim(),
         region: String(fields.get('region')).trim(),
       })
       onAdded(contractor)
+      notify('success', contractor.name + ' was added.')
       setAdded(contractor.name + ' was added.')
       form.reset()
       setRegionDraft(undefined)
     } catch (failure) {
+      notify('error', 'The contractor could not be added.')
       setError(failure instanceof Error ? failure.message : 'Could not add the contractor.')
     } finally {
       setSaving(false)
