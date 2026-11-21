@@ -2,7 +2,17 @@
 
 ## Launch the demo on Windows
 
-After first-time setup, double-click **start-demo.cmd** or run it from the checkout in PowerShell.
+1. Open PowerShell in the repository folder (the folder containing [start-demo.cmd](start-demo.cmd)). On a fresh checkout, or after the dependency files change, run:
+
+   ```powershell
+   .\start-demo.cmd --setup
+   ```
+
+   Setup uses Windows Package Manager (`winget`) for missing Git for Windows, Python and Node.js with npm. It then runs the shared [setup script](scripts/setup.sh), enables the repository hooks, installs all backend requirements into `backend/.venv` (including `tzdata` for Berlin appointments), installs the locked frontend packages, and creates `backend/.env` on first use. Rerunning setup keeps existing personal settings. If Windows asks for installer approval, allow the installation. If you install prerequisites manually, use Git for Windows with Git Bash, Python 3.10+ and Node.js 24 LTS with npm.
+
+2. For a local demo, the default simulated outbox works immediately. For email or phone delivery, configure the backend settings under [Notifications](#notifications) before launching.
+
+3. Double-click **start-demo.cmd**. Alternatively, open a fresh PowerShell in the repository folder and run:
 
 ```powershell
 .\start-demo.cmd
@@ -12,15 +22,20 @@ Open the [resident portal](http://localhost:5173) once Vite says it is ready. Th
 
 To stop the demo, press **Ctrl+C in each server window**, confirm with **Y** if prompted, then close the windows. If you launch twice, the new windows show the port conflicts and the first servers keep running. The API also has a [health check](http://localhost:8000/api/health) and [interactive API docs](http://localhost:8000/docs).
 
-### First-time setup
+### Git Bash, macOS or Linux
 
-Install Git for Windows (including Git Bash), Python 3.10 or newer, and Node.js 22.12 or newer with npm. Run the setup script from the repository root in **Git Bash**.
+With Git, Bash, Python 3.10+ (including pip and venv), and Node.js with npm installed, run the same dependency setup from the repository root.
 
 ```bash
 bash scripts/setup.sh
 ```
 
-Setup enables the Git hooks, creates the backend virtual environment, installs backend and frontend dependencies, and creates `backend/.env` if missing. The local demo uses synthetic data, a simulated HeatFix contractor and deterministic intake. The default setup works without API keys.
+On Windows, use the launcher above. On macOS or Linux, open two terminals in the repository root and run one line in each. Open [the portal](http://localhost:5173) when Vite is ready. Press **Ctrl+C** in both terminals to stop.
+
+```bash
+cd backend && .venv/bin/python -m uvicorn app.main:app --port 8000
+cd frontend && VITE_API_BASE_URL=http://localhost:8000 npm run dev -- --port 5173 --strictPort
+```
 
 ### Manual two-terminal fallback
 
@@ -42,7 +57,7 @@ npm.cmd run dev -- --port 5173 --strictPort
 ### Walk through a heating report
 
 1. In **Report**, enter “No heat since last night.” Review the editable summary, answer any follow-up, choose the fields to share and select **Approve and send**.
-2. In **HeatFix inbox**, find the job for that case, select **Accept**, then **Offer slots**. Return to **Report**, refresh the case, select a time and choose **Confirm appointment**.
+2. In the resident portal's **Availability** view, save an available time. In the assigned contractor's inbox (HeatFix for the default setup), find the job, select **Accept**, choose the resident's available time and select **Book visit**.
 3. In **HeatFix inbox**, refresh the job list, select **Start repair**, then **Complete repair**. Enter a repair summary and select **Save completion**.
 4. Select **Submit demo invoice**, then **Confirm demo invoice**. Open **My cases** or **Manager** to check the same case and unit, read the repair outcome and download the synthetic invoice.
 
@@ -110,27 +125,7 @@ npm run build
 
 Shared frontend, backend and integration fixtures are stored in `shared/fixtures/`. Treat their shape as a team contract.
 
-## Run the backend
-
-From the repository root, use Python 3.10 or newer. In PowerShell run the following commands.
-
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
-```
-
-In Bash, activate the virtual environment first.
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m pytest -q                                 # vertical-slice tests
-python -m uvicorn app.main:app --reload --port 8000
-```
+## Backend configuration
 
 Open the interactive API at `http://localhost:8000/docs`. Startup seeds new SQLite databases in `backend/data/app.db` and upgrades existing cases in place. Defaults run both the centrix stand-in and simulated HeatFix on port 8000. For other addresses or a custom shared secret, set `PUBLIC_BACKEND_URL`, `PARTNER_BASE_URL` and `PARTNER_WEBHOOK_SECRET` in the environment or in `backend/.env`. See the [environment template](.env.example).
 
@@ -152,7 +147,16 @@ The backend writes one notification per recipient for each case milestone: reque
 
 ### Choose where messages go
 
-All settings live in `backend/.env`, a git-ignored file copied from the root [`.env.example`](.env.example). Explorer hides it because its name starts with a dot; open it in VS Code. Restart the backend after every change. `NOTIFY_TRANSPORT` is a comma list with one email transport and one text transport:
+The launcher inherits your Windows user environment variables. FastAPI also reads the git-ignored `backend/.env` that setup copies from the root [environment template](.env.example). **An existing environment variable takes precedence over the same name in the file.** After changing Windows user variables, launch from a new PowerShell window. After editing the file, restart the backend. Keep personal values and tokens in your user environment or `backend/.env`; the frontend only needs the public API URL.
+
+| Optional feature | Backend environment variables | Recipient setup |
+| --- | --- | --- |
+| Email | `NOTIFY_TRANSPORT=smtp`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_STARTTLS`, `NOTIFY_FROM`; for authenticated SMTP, `SMTP_USER` and `SMTP_PASSWORD` | The resident chooses **Email** and saves the destination address in their profile. `NOTIFY_MANAGER_EMAIL` supplies the manager inbox for invoice approvals. |
+| Phone push via ntfy | `NOTIFY_TRANSPORT=ntfy`, `NTFY_SERVER` | Choose **Phone** and subscribe to the recipient's topic in the ntfy app. |
+| Phone push via Telegram | `NOTIFY_TRANSPORT=telegram`, `TELEGRAM_BOT_TOKEN` | Choose **Phone**, start the bot and save the chat ID in the recipient's notification preferences. |
+| Links in messages | `PUBLIC_FRONTEND_URL` | Use a portal URL reachable from the receiving device. |
+
+Phone delivery uses an ntfy topic or Telegram chat ID. The phone number on the resident profile is contact information for an approved repair handoff. To enable both email and phone delivery, combine transports with a comma:
 
 | `NOTIFY_TRANSPORT` | Email goes to | Text messages go to | Needs |
 | --- | --- | --- | --- |
@@ -209,7 +213,7 @@ ntfy topics are public, so the long random name is the only protection. Use synt
 5. Store it with `PUT /api/recipients/resident/c_202/notification-preferences` and the body `{"telegram_chat_id": "<chat id>", "categories": []}`. Fields you leave out keep their values.
 6. Choose **Phone** as your preferred contact and report or advance a repair.
 
-Links in messages point to `PUBLIC_FRONTEND_URL` (default `http://localhost:5173`), which opens only on the computer running the portal. To open them from a phone on the same Wi-Fi, set it to the computer's network address, for example `http://192.168.1.20:5173`.
+Links in messages default to `http://localhost:5173`, which opens on the demo computer. To use them from a phone, configure `PUBLIC_FRONTEND_URL` with a deployment reachable from the phone, with a reachable API URL and corresponding `CORS_ORIGINS`. The Windows launcher starts a localhost demo.
 
 ## Three-person workflow
 
