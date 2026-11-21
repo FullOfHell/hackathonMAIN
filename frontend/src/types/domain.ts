@@ -221,16 +221,25 @@ export interface PartnerJob {
   callback_url: string
 }
 
+export interface ContractorRouting {
+  latitude: number
+  longitude: number
+  estimated_price_eur: number
+  quality_rating: number
+}
+
 export interface ContractorInput {
   name: string
   slug: string
   region: string
+  routing: ContractorRouting
 }
 
 export interface Contractor {
   name: string
   slug: string
   regions: string[]
+  routing?: ContractorRouting
 }
 
 export interface PartnerInboxJob {

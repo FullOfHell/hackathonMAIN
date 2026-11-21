@@ -204,6 +204,80 @@ MANAGER_CONTRACTORS = "/api/manager/contractors"
 MANAGER_CONTRACTOR = {"name": "Aachen Demo Heating", "slug": "aachen-demo-heating", "region": "Aachen"}
 
 
+def test_contractor_ranking_uses_distance_price_and_rating_before_approval(client):
+    far = {"latitude": 51.1, "longitude": 6.095, "estimated_price_eur": 85, "quality_rating": 5}
+    registered = client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | {"routing": far})
+    assert registered.status_code == 201, registered.text
+    assert registered.json()["routing"] == far
+    routing_path = f"{MANAGER_CONTRACTORS}/{MANAGER_CONTRACTOR['slug']}/routing"
+    contractor_id = "p_manager_aachen-demo-heating"
+
+    case = create_case(client)
+    path = f"/api/cases/{case['id']}"
+    assert case["partner_id"] == "p_heatfix"
+
+    same_distance = far | {"latitude": 50.779, "quality_rating": 4}
+    assert client.put(routing_path, json=same_distance).status_code == 200
+    init_db()
+    assert client.get(path).json()["partner_id"] == contractor_id
+    assert client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"}).status_code == 409
+
+    lower_quality = same_distance | {"quality_rating": 2}
+    assert client.put(routing_path, json=lower_quality).status_code == 200
+    assert client.get(path).json()["partner_id"] == "p_heatfix"
+    approved = client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"})
+    assert approved.status_code == 200, approved.text
+
+    assert client.put(routing_path, json=same_distance).status_code == 200
+    assert client.get(path).json()["partner_id"] == "p_heatfix"
+    assert len(client.get(HEATFIX_JOBS).json()) == 1
+
+
+def test_ranking_without_repair_coordinates_uses_price_and_rating(client):
+    routing = {"latitude": 51.1, "longitude": 6.095, "estimated_price_eur": 85, "quality_rating": 4}
+    body = MANAGER_CONTRACTOR | {"routing": routing | {"quality_rating": 6}}
+    assert client.post(MANAGER_CONTRACTORS, json=body).status_code == 422
+    assert client.post(MANAGER_CONTRACTORS, json=body | {"routing": routing}).status_code == 201
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    address = {"acting_resident_id": "c_202", "address": "Demo Street 16, 52062 Aachen"}
+    assert client.patch(profile, json=address).status_code == 200
+    assert create_case(client)["partner_id"] == "p_manager_aachen-demo-heating"
+
+
+def test_unavailable_contractor_blocks_dispatch_and_saved_case_can_recover(client):
+    pending = create_case(client)
+    pending_path = f"/api/cases/{pending['id']}"
+    with closing(connect()) as conn, conn:
+        conn.execute("UPDATE partners SET active=0 WHERE id='p_heatfix'")
+        # An offer matching the exact region, service and trigger still cannot receive a repair.
+        conn.execute("UPDATE partners SET service_types=? WHERE id='p_fibrenet'", ('["heating_repair"]',))
+        conn.execute("UPDATE partner_capabilities SET manifest=json_set(manifest,'$.triggers',json(?)) "
+                     "WHERE partner_id='p_fibrenet'", ('["maintenance.case_created"]',))
+    unavailable = create_case(client)
+    assert unavailable["status"] == "NO_PROVIDER_AVAILABLE"
+    assert unavailable["partner_id"] is None and "sharing_request" not in unavailable
+    assert client.get(pending_path).json()["status"] == "NO_PROVIDER_AVAILABLE"
+    rejected = client.post(pending_path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"})
+    assert rejected.status_code == 409
+    assert "No contractors available" in rejected.json()["detail"]
+    assert client.get(pending_path).json()["sharing_approval"] is None
+    assert client.get(HEATFIX_JOBS).json() == []
+
+    assert client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR).status_code == 201
+    recovered = client.get(pending_path).json()
+    assert recovered["id"] == pending["id"]
+    assert recovered["status"] == "AWAITING_SHARING_APPROVAL"
+    assert recovered["sharing_request"]["partner"]["name"] == MANAGER_CONTRACTOR["name"]
+    assert client.post(pending_path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"}).status_code == 409
+    jobs_url = f"/partners/{MANAGER_CONTRACTOR['slug']}/connector/jobs"
+    assert client.get(jobs_url).json() == []
+    approved = client.post(pending_path + "/sharing-approval",
+                           json=CONSENT | {"expected_partner_id": recovered["partner_id"]})
+    assert approved.status_code == 200, approved.text
+    job, = client.get(jobs_url).json()
+    assert job["id"] == approved.json()["partner_job_id"]
+
+
 def test_manager_adds_persistent_contractor_and_routes_approved_repair(client):
     response = client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR)
     assert response.status_code == 201, response.text

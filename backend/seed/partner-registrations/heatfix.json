@@ -1,6 +1,7 @@
 {
   "name": "HeatFix Aachen GmbH",
   "base_url": "/partners/heatfix",
+  "routing": {"latitude": 50.779, "longitude": 6.095, "estimated_price_eur": 120, "quality_rating": 4},
   "capabilities": {
     "schema_version": "1.0", "partner_id": "p_heatfix", "kind": "delivery",
     "categories": ["heating_repair"], "regions": ["Aachen"], "triggers": ["maintenance.case_created"],

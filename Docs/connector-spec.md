@@ -78,17 +78,33 @@ For saved local demo jobs, HTTP callback URLs on `localhost` and `127.0.0.1` can
 
 ## Adding a delivery provider
 
-In the portal, open **Manager → Contractors → Add contractor** to register a simulated heating contractor without restarting FastAPI. Enter the company name, exact service region and a unique inbox slug. The saved contractor appears in the list with an **Open inbox** link. New cases use the usual service and region match, with the name as a tie-break.
+In the portal, open **Manager → Contractors** to register a simulated heating contractor without restarting FastAPI. Enter the company name, service region, unique inbox slug, contractor latitude and longitude, estimated service price in euros and a 1–5 star quality rating. Use **Edit** to update an existing contractor’s matching details and **Open inbox** to see its jobs.
 
-The demo manager API lists active local delivery providers at `GET /api/manager/contractors`. `POST /api/manager/contractors` accepts `name`, `region` and `slug`, and returns 201 with `name`, `regions` and `slug`. The slug uses lowercase letters, digits and hyphen separators. A slug already in use returns 409. The portal form generates a local connector route and uses the built-in heating simulator.
+The demo manager API lists active local delivery providers at `GET /api/manager/contractors`. `POST /api/manager/contractors` accepts `name`, `region`, `slug` and optional `routing`. The routing object contains `latitude`, `longitude`, a positive `estimated_price_eur` and an integer `quality_rating` from 1 to 5. `PUT /api/manager/contractors/{slug}/routing` accepts that object directly. List and save responses include `name`, `regions`, `slug` and `routing` when configured. The slug uses lowercase letters, digits and hyphen separators. A slug already in use returns 409. The portal form generates a local connector route and uses the built-in heating simulator.
 
 Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
 
 1. Add a manifest in `backend/seed/partner-registrations/` with a unique `partner_id`, `kind: delivery`, a `base_url`, categories, regions, and the `maintenance.case_created` trigger. Restart FastAPI. A local `/partners/{slug}` base uses the built-in simulator. For an external provider, use the HTTPS base URL of a connector v1 adapter implementing job creation, any advertised actions, and authenticated callbacks. Put provider-specific API calls and credentials behind that adapter.
 2. Declare `address`, `unit`, and `issue` as required. The manifest can also require or allow supported consent fields. FastAPI presents those fields and validates approval before persisting the order. If the new service needs fields or outcomes outside connector v1, it needs an extension to the contract.
-3. Use either direct dispatch or the [provider-neutral n8n workflow](../n8n/README.md#provider-neutral-workflow). The same workflow forwards an approved case ID to a fixed gateway. FastAPI chooses the provider by category, region, activation and trigger, and the gateway reads that choice from the saved case. Its request accepts only the case ID. The partner still receives the v1 order and a stable idempotency key.
+3. Optionally add the same `routing` object to the registration manifest to include the provider in scoring. Use either direct dispatch or the [provider-neutral n8n workflow](../n8n/README.md#provider-neutral-workflow). The workflow forwards the approved case ID to a fixed gateway. FastAPI selects the provider, and the gateway reads the approved choice from the saved case. The partner receives the v1 order and a stable idempotency key.
 
 **Verify a new registration.** Use the manifest’s category as `issue_type` in the [case fixture](../shared/fixtures/case-create.json). Submit it to `POST /api/cases` for a unit in a covered region, confirm the expected provider was selected, then approve the fields returned in `sharing_request`. Check `{base_url}/connector/jobs` for the job. Replay the dispatch and confirm the job ID is reused. The [registration tests](../backend/tests/test_partner_registration.py) exercise this using temporary manifests for categories outside the bundled delivery demo.
+
+### Contractor ranking
+
+FastAPI first filters by service category, coverage region, activation, delivery kind and maintenance trigger. When at least two eligible contractors have matching details, FastAPI picks the configured contractor with the highest score:
+
+```text
+score = 0.60 × 5/(5 + distance_km)
+      + 0.20 × 100/(100 + estimated_price_eur)
+      + 0.20 × (quality_rating - 1)/4
+```
+
+Distance uses straight-line kilometers and carries the most weight. Five kilometers and €100 are the reference values at which the respective components earn half their maximum. A nearby competitor can win through better price or quality. The quality input is a manager-assigned star rating, and the price is a standing service estimate. Ties favor shorter distance, then name and ID.
+
+The demo loads known repair address coordinates from `repair_locations` in `backend/seed/seed.json`. A different address uses its own coordinates when configured. If its coordinates are unavailable, matching uses price and quality. With fewer than two eligible routing profiles, FastAPI uses the legacy name and ID ordering. Ranking is refreshed until sharing approval, which fixes the recipient for dispatch and retries.
+
+When no eligible contractor remains, the portal shows **No contractors available** and keeps the report. **Check contractor availability** reopens the sharing preview for the same report if a contractor becomes available. Changes to the recipient require fresh approval before any data is sent.
 
 ## Adding an internet move-in offer
 

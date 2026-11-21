@@ -7,7 +7,7 @@ import { NotificationBell } from './NotificationBell'
 import { ManagerContractors } from './ManagerContractors'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
-import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
+import { caseStatusLabel, formatTime, noContractorsLabel, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
@@ -102,7 +102,10 @@ function App() {
         {view === '#cases' && <ResidentCases />}
         {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
         {view === '#manager' && <Manager contractors={contractors} loadError={contractorLoadFailed}
-          onAdded={(contractor) => setContractors((list) => [...(list ?? []), contractor])} />}
+          onSaved={(contractor) => setContractors((list = []) =>
+            list.some((entry) => entry.slug === contractor.slug)
+              ? list.map((entry) => entry.slug === contractor.slug ? contractor : entry)
+              : [...list, contractor])} />}
       </main>
       <footer>{isFixtureMode ? 'Fixture mode. Reports are simulated and reset on reload.' : 'Hackathon demo using fictional properties and a simulated contractor.'}</footer>
     </>
@@ -166,6 +169,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const isShared = (field: (typeof fields)[number]) => field.required || selected.includes(field.key)
   const sharedFields = fields.filter(isShared)
   const request = current?.sharing_request ?? (current?.status === 'PARTNER_REQUESTED' ? dispatch?.request : undefined)
+  const noContractor = current?.status === 'NO_PROVIDER_AVAILABLE'
   const awaitingConsentReceipt = Boolean(dispatch && !current?.sharing_approval)
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
   const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
@@ -321,8 +325,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           setCurrent(latest)
           setApproved(false)
           setDispatch(null)
-          setError(latest.sharing_request ? 'The contractor changed. Review and approve sharing again.'
-            : 'No contractor covers the saved repair address.')
+          if (latest.sharing_request) setError('The contractor changed. Review and approve sharing again.')
         } else {
           if (latest?.sharing_approval) setCurrent(latest)
           setError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
@@ -330,6 +333,22 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       } else {
         setError('Your case could not be saved. Your report is still here.')
       }
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
+  }
+
+  async function checkContractors() {
+    if (!current || submitting.current || profileSave.current) return
+    submitting.current = true
+    setBusy(true)
+    setError('')
+    try {
+      setCurrent(await api.getCase(current.id))
+      setApproved(false)
+    } catch {
+      setError('Contractor availability could not be checked. Please try again.')
     } finally {
       submitting.current = false
       setBusy(false)
@@ -347,7 +366,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const stepHeading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
     if (step > 0) stepHeading.current?.focus()
-  }, [step, sent])
+  }, [step, sent, noContractor])
 
   return (
     <div className="report-layout">
@@ -453,13 +472,19 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           {error && <p className="error" role="alert">{error}</p>}
           <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
         </form> : <div>
-          <h2 ref={stepHeading} tabIndex={-1}>{current.status === 'NO_PROVIDER_AVAILABLE' ? 'No contractors are available in this location' : 'Report saved for review'}</h2>
-          <p>{current.status === 'NO_PROVIDER_AVAILABLE'
-            ? 'Your report was saved.'
+          <h2 ref={stepHeading} tabIndex={-1}>{noContractor ? noContractorsLabel : 'Report saved for review'}</h2>
+          <p>{noContractor
+            ? 'Your report was saved. You can check again for a contractor who serves your address.'
             : `Case ${current.id}. Contractor receipt has not been confirmed.`}</p>
           <p>{current.description}</p>
           <CaseTimeline caseId={current.id} />
-          <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="actions">
+            {noContractor && <button type="button" onClick={() => void checkContractors()} disabled={busy || profileSaving}>
+              {busy ? 'Checking…' : 'Check contractor availability'}
+            </button>}
+            <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
+          </div>
         </div>)}
         {sent && current && <div>
           <h2 ref={stepHeading} tabIndex={-1}>{isFixtureMode ? 'Demo job created' : 'Your contractor has your report'}</h2>
@@ -656,14 +681,14 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
 function Manager(props: {
   contractors: Contractor[] | undefined
   loadError: boolean
-  onAdded: (contractor: Contractor) => void
+  onSaved: (contractor: Contractor) => void
 }) {
   const home = useLoad(loadHome)
   const repairs = useLoad(api.listManagerRepairs)
   return (
     <div>
-      <ManagerContractors {...props} region={home.data?.property.region ?? ''} onAdded={(contractor) => {
-        props.onAdded(contractor)
+      <ManagerContractors {...props} region={home.data?.property.region ?? ''} onSaved={(contractor) => {
+        props.onSaved(contractor)
         repairs.reload()
       }} />
       <section className="inbox" aria-label="Repairs by contractor">

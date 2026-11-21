@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE TABLE IF NOT EXISTS partner_capabilities (
   partner_id TEXT PRIMARY KEY REFERENCES partners(id), manifest TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS contractor_routing (
+  partner_id TEXT PRIMARY KEY REFERENCES partners(id), profile TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS repair_locations (
+  address_key TEXT PRIMARY KEY, latitude REAL NOT NULL, longitude REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS case_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
   type TEXT NOT NULL, actor TEXT NOT NULL, timestamp TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}'
@@ -168,11 +174,18 @@ def init_db(seed: bool = True) -> None:
                              (json.dumps(json.loads(doc["content"]), sort_keys=True), doc["event_id"]))
         if seed:
             from app.partners.registry import install_registrations
+            from app.services.cases import normalize_location
+
+            data = json.loads(SEED_PATH.read_text(encoding="utf-8"))
             install_registrations(conn)
             if conn.execute("SELECT COUNT(*) FROM properties").fetchone()[0] == 0:
-                load_seed(conn)
+                load_seed(conn, data)
             elif conn.execute("SELECT COUNT(*) FROM owners").fetchone()[0] == 0:
-                load_owners(conn, json.loads(SEED_PATH.read_text(encoding="utf-8")))
+                load_owners(conn, data)
+            conn.executemany("INSERT OR IGNORE INTO repair_locations VALUES (?,?,?)", [
+                (normalize_location(location["address"]), location["latitude"], location["longitude"])
+                for location in data.get("repair_locations", [])
+            ])
         if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
             from app.services.invoices import review_legacy_invoices
             review_legacy_invoices(conn)
@@ -182,8 +195,7 @@ def init_db(seed: bool = True) -> None:
         conn.close()
 
 
-def load_seed(conn: sqlite3.Connection) -> None:
-    data = json.loads(SEED_PATH.read_text(encoding="utf-8"))
+def load_seed(conn: sqlite3.Connection, data: dict) -> None:
     for p in data["properties"]:
         conn.execute("INSERT INTO properties VALUES (?,?,?,?,?,?)",
                      (p["id"], p["address"], p["building_year"], p["heating_type"], p["region"], p["access_details"]))

@@ -6,6 +6,7 @@ import type {
   ContactChannel,
   Contractor,
   ContractorInput,
+  ContractorRouting,
   CreateCaseRequest,
   IntakeRequest,
   IntakeResponse,
@@ -214,6 +215,11 @@ export const api = {
   addContractor: (body: ContractorInput): Promise<Contractor> => request('/api/manager/contractors', {
     method: 'POST', body: JSON.stringify(body),
   }),
+
+  updateContractorRouting: (slug: string, body: ContractorRouting): Promise<Contractor> =>
+    request(`/api/manager/contractors/${encodeURIComponent(slug)}/routing`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
 
   listPartnerJobs: (partnerSlug: string): Promise<PartnerInboxJob[]> =>
     apiBaseUrl ? request(partnerJobsPath(partnerSlug))
