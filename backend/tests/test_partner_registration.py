@@ -422,13 +422,13 @@ def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatc
     third = client.post("/api/cases", json=report).json()
     result = client.get("/api/manager/repairs")
     assert result.status_code == 200, result.text
-    heatfix, heetsfix = result.json()
+    heatfix, heetsfix, unassigned = result.json()
     assert heatfix["contractor"] == {"id": "p_heatfix", "name": "HeatFix Aachen GmbH"}
     assert {first["id"], "case_000"} <= {repair["case"]["id"] for repair in heatfix["repairs"]}
     assert heetsfix["contractor"] == {"id": "p_manager_dusseldorf-heating", "name": "HeetsFix"}
     assigned = next(repair for repair in heetsfix["repairs"] if repair["case"]["id"] == second["id"])
     assert (assigned["case"]["id"], assigned["case"]["unit_id"]) == (second["id"], "unit_2a")
     assert (assigned["address"], assigned["unit"]) == (details["address"], details["unit"])
-    remaining, = [repair for group in (heatfix, heetsfix) for repair in group["repairs"]
-                  if repair["case"]["id"] == third["id"]]
-    assert remaining["address"] == uncovered
+    assert unassigned["contractor"] is None
+    remaining, = unassigned["repairs"]
+    assert (remaining["case"]["id"], remaining["address"]) == (third["id"], uncovered)
