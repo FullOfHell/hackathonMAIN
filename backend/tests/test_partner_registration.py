@@ -337,7 +337,7 @@ def test_existing_draft_requires_consent_for_updated_recipient(client):
     assert client.post(MANAGER_CONTRACTORS, json=region).status_code == 201
 
     profile = "/api/units/unit_4b/residents/c_202/profile"
-    address = {"acting_resident_id": "c_202", "address": "Aachen Street 1, Berlin"}
+    address = {"acting_resident_id": "c_202", "address": "Demo Street 1, Brussels, Belgium"}
     assert client.patch(profile, json=address).status_code == 200
     updated = client.get(path).json()
     assert updated["status"] == "NO_PROVIDER_AVAILABLE"
@@ -359,13 +359,13 @@ def test_existing_draft_requires_consent_for_updated_recipient(client):
     assert client.get(path).json()["partner_id"] == updated["partner_id"]
 
 
-def test_koln_has_no_contractor_until_a_delivery_provider_is_registered(client):
+def test_koln_uses_country_fallback_until_a_local_delivery_provider_registers(client):
     profile = "/api/units/unit_4b/residents/c_202/profile"
     assert client.patch(profile, json={"acting_resident_id": "c_202", "address": "Demo Street 21, 50667 Köln"}).status_code == 200
 
     case = create_case(client)
-    assert case["status"] == "NO_PROVIDER_AVAILABLE"
-    assert case["partner_id"] is None and "sharing_request" not in case
+    assert case["status"] == "AWAITING_SHARING_APPROVAL"
+    assert case["sharing_request"]["partner"]["id"] == "p_heatfix"
 
     # Reproduce a draft that stored the legacy contractor before routing required registration.
     with closing(connect()) as conn, conn:
@@ -373,8 +373,7 @@ def test_koln_has_no_contractor_until_a_delivery_provider_is_registered(client):
                      (case["id"],))
     url = f"/api/cases/{case['id']}"
     projected = client.get(url).json()
-    assert projected["status"] == "NO_PROVIDER_AVAILABLE"
-    assert projected["partner_id"] is None and "sharing_request" not in projected
+    assert projected["partner_id"] == "p_heatfix"
     assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_warmwerk"}).status_code == 409
     assert client.get(HEATFIX_JOBS).json() == []
 
@@ -382,6 +381,17 @@ def test_koln_has_no_contractor_until_a_delivery_provider_is_registered(client):
     assert client.post(MANAGER_CONTRACTORS, json=registered).status_code == 201
     assert client.get(url).json()["sharing_request"]["partner"]["name"] == registered["name"]
     assert create_case(client)["partner_id"] == "p_manager_cologne-heating"
+
+
+def test_country_fallback_respects_explicit_foreign_country(client):
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    address = {"acting_resident_id": "c_202", "address": "Demo Street 1, 1000 Brussels, Belgium"}
+    assert client.patch(profile, json=address).status_code == 200
+    case = create_case(client)
+    assert case["partner_id"] is None
+    contractor = MANAGER_CONTRACTOR | {"region": "Ghent, Belgium"}
+    assert client.post(MANAGER_CONTRACTORS, json=contractor).status_code == 201
+    assert client.get(f"/api/cases/{case['id']}").json()["sharing_request"]["partner"]["name"] == contractor["name"]
 
 
 def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatch_address(client):
@@ -401,7 +411,7 @@ def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatc
                 "expected_partner_id": "p_manager_dusseldorf-heating"}
     assert client.post(f"/api/cases/{second['id']}/sharing-approval", json=approval).status_code == 200
 
-    uncovered = "Demo Street 16, 10115 Berlin"
+    uncovered = "Demo Street 16, 1000 Brussels, Belgium"
     assert client.patch(profile, json=details | {"address": uncovered}).status_code == 200
     third = client.post("/api/cases", json=report).json()
     result = client.get("/api/manager/repairs")

@@ -29,6 +29,24 @@ def create_case(client):
     return r.json()
 
 
+def test_editing_unshared_report_reuses_case_and_preserves_approved_order(client):
+    case = create_case(client)
+    path = "/api/cases/" + case["id"]
+    body = load("case-create.json") | {"description": "Only the bedroom radiator is cold.", "symptoms": ["cold_radiator"]}
+    assert client.put(path + "/report", json=body | {"resident_id": "c_203"}).status_code == 403
+    for _ in range(2):
+        edited = client.put(path + "/report", json=body)
+        assert edited.status_code == 200 and edited.json()["id"] == case["id"]
+    events = client.get(path + "/events").json()
+    assert [event["type"] for event in events].count("case.report_updated") == 1
+    jobs = "/partners/heatfix/connector/jobs"
+    assert client.get(jobs).json() == []
+    assert client.post(path + "/sharing-approval", json=load("sharing-approval.json")).status_code == 200
+    assert client.put(path + "/report", json=load("case-create.json")).status_code == 409
+    job, = client.get(jobs).json()
+    assert job["payload"]["issue"]["description"] == body["description"]
+
+
 def test_unit_context_has_prior_heating_case(client):
     ctx = client.get("/api/units/unit_4b/context").json()
     assert ctx["property"]["heating"] == "gas central heating"

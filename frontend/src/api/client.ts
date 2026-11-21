@@ -170,6 +170,27 @@ export const api = {
         })
       : createDemoCase(body),
 
+  async updateCaseReport(caseId: string, body: CreateCaseRequest): Promise<MaintenanceCase> {
+    if (apiBaseUrl) return request('/api/cases/' + encodeURIComponent(caseId) + '/report', {
+      method: 'PUT', body: JSON.stringify(body),
+    })
+    const item = demoCases.get(caseId)
+    if (!item || item.status !== 'AWAITING_SHARING_APPROVAL' || item.resident_id !== body.resident_id) {
+      throw new Error('This report cannot be edited.')
+    }
+    if (item.unit_id !== body.unit_id || item.issue_type !== body.issue_type || item.source_channel !== body.source_channel) {
+      throw new Error('The unit, issue type and source channel are fixed.')
+    }
+    const updated = { ...item, description: body.description, symptoms: body.symptoms,
+      urgency: body.urgency, availability_preferences: body.availability_preferences ?? [] }
+    if (JSON.stringify(updated) !== JSON.stringify(item)) {
+      updated.updated_at = new Date().toISOString()
+      demoCases.set(caseId, updated)
+      recordDemoEvent(caseId, 'resident:' + body.resident_id, 'case.report_updated', {})
+    }
+    return waitForFixture(updated)
+  },
+
   async getCase(caseId: string): Promise<MaintenanceCase> {
     if (apiBaseUrl) return request('/api/cases/' + encodeURIComponent(caseId))
     const demoCase = demoCases.get(caseId)

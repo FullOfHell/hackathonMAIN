@@ -92,7 +92,7 @@ Register another delivery provider with a connector v1 adapter to reuse the case
 
 ### Contractor ranking
 
-FastAPI first filters by service category, coverage region, activation, delivery kind and maintenance trigger. When at least two eligible contractors have matching details, FastAPI picks the configured contractor with the highest score:
+FastAPI filters by service category, activation, delivery kind and maintenance trigger. For heating repairs it prefers contractors in the repair city. If that pool is empty, it ranks contractors in other cities in the same country. Other service categories require a matching region. In this demo a bare city means Germany. For another country use `City, Country` as the contractor region and `Street, Postal code City, Country` as the repair address. When at least two eligible contractors have matching details, FastAPI picks the configured contractor with the highest score:
 
 ```text
 score = 0.60 × 5/(5 + distance_km)

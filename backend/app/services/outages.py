@@ -5,7 +5,7 @@ import uuid
 
 import httpx
 
-from app.services.cases import record_event, transition
+from app.services.cases import normalize_location, record_event, transition
 from app.states import CaseStatus as S
 
 
@@ -32,8 +32,11 @@ def detect(conn, body, property_id, partner_id, timestamp):
     if body.issue_type != "heating_repair" or not reports_no_heat(body.symptoms, body.description):
         return
     rows = conn.execute(
-        "SELECT c.id,c.unit_id,c.symptoms,c.description,c.status,m.outage_id,o.dispatch_case_id "
-        "FROM cases c JOIN units u ON u.id=c.unit_id LEFT JOIN outage_cases m ON m.case_id=c.id "
+        "SELECT c.id,c.unit_id,c.symptoms,c.description,c.status,m.outage_id,o.dispatch_case_id,p.address, "
+        "COALESCE(json_extract(ord.payload,'$.property.address'),r.address,p.address) AS repair_address "
+        "FROM cases c JOIN units u ON u.id=c.unit_id JOIN properties p ON p.id=u.property_id "
+        "JOIN residents r ON r.id=c.resident_id LEFT JOIN partner_orders ord ON ord.case_id=c.id "
+        "LEFT JOIN outage_cases m ON m.case_id=c.id "
         "LEFT JOIN building_outages o ON o.id=m.outage_id LEFT JOIN cases lead ON lead.id=o.dispatch_case_id "
         "WHERE u.property_id=? AND c.issue_type='heating_repair' AND c.partner_id=? "
         "AND julianday(c.created_at) BETWEEN julianday(?)-1 AND julianday(?) "
@@ -42,7 +45,8 @@ def detect(conn, body, property_id, partner_id, timestamp):
         (property_id, partner_id, timestamp, timestamp, S.AWAITING_SHARING_APPROVAL, S.PARTNER_REQUESTED,
          S.SLOTS_OFFERED, S.SCHEDULED, S.IN_PROGRESS, S.LINKED_TO_BUILDING_REPAIR,
          S.PARTNER_REQUESTED, S.SLOTS_OFFERED, S.SCHEDULED, S.IN_PROGRESS)).fetchall()
-    matches = [r for r in rows if reports_no_heat(json.loads(r["symptoms"]), r["description"])]
+    matches = [r for r in rows if normalize_location(r["repair_address"]) == normalize_location(r["address"])
+               and reports_no_heat(json.loads(r["symptoms"]), r["description"])]
     if not any(r["unit_id"] != body.unit_id for r in matches):
         return
     existing = next((r for r in matches if r["outage_id"]), None)
