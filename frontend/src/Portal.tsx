@@ -6,6 +6,9 @@ import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
 import { ManagerContractors } from './ManagerContractors'
 import { ContractorTimetable, TenantTimetable } from './Timetable'
+import { ActionFeedback, feedbackDuration, useActionFeedback, useBeforeSend } from './actionFeedback'
+import { SendWindow } from './SendWindow'
+import type { ActionResult } from './actionFeedback'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, noContractorsLabel, slotLabel, statusLabel } from './caseDisplay'
@@ -20,28 +23,49 @@ import './Portal.css'
 const shortcuts = ['No heat at all', 'Radiators are lukewarm', 'Some radiators are cold']
 const steps = ['Describe', 'Review', 'Approve']
 
-function useLoad<T>(load: () => Promise<T>) {
+function useLoad<T>(load: () => Promise<T>, label: string) {
+  const notify = useActionFeedback()
+  const manual = useRef(false)
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<{ data?: T; failed?: boolean }>({})
   useEffect(() => {
     let active = true
     load().then(
-      (data) => { if (active) setResult({ data }) },
-      () => { if (active) setResult({ failed: true }) },
+      (data) => {
+        if (!active) return
+        setResult({ data })
+        if (manual.current) notify('success', label + ' refreshed.')
+        manual.current = false
+      },
+      () => {
+        if (!active) return
+        setResult({ failed: true })
+        if (manual.current) notify('error', label + ' could not be loaded.')
+        manual.current = false
+      },
     )
     return () => { active = false }
-  }, [load, attempt])
+  }, [load, attempt, label, notify])
+  function reload(silent = false) {
+    manual.current = !silent
+    setResult({})
+    setAttempt((value) => value + 1)
+  }
   return {
     ...result,
     refreshing: attempt > 0 && !result.data && !result.failed,
     refreshed: attempt > 0 && Boolean(result.data),
-    reload: () => { setResult({}); setAttempt((value) => value + 1) },
+    reload: () => reload(), reloadSilently: () => reload(true),
   }
 }
 
 const unitId = 'unit_4b'
 const loadHome = () => api.getUnitContext(unitId)
 const loadUnitCases = () => api.listUnitCases(unitId)
+const loadResidentCases = async () => {
+  const [home, cases] = await Promise.all([loadHome(), loadUnitCases()])
+  return cases.filter((item) => item.resident_id === home.residents[0]?.id)
+}
 const defaultInbox = { slug: defaultContractorSlug, name: 'HeatFix Aachen' }
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
@@ -50,6 +74,13 @@ const views = {
 }
 
 function App() {
+  const [notice, setNotice] = useState<{ result: ActionResult; message: string }>()
+  const notify = useCallback((result: ActionResult, message: string) => setNotice({ result, message }), [])
+  useEffect(() => {
+    if (!notice) return
+    const timeout = window.setTimeout(() => setNotice(undefined), feedbackDuration)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
   const [hash, setHash] = useState(() => location.hash)
   const partnerSlug = contractorInboxSlug(hash)
   const view = partnerSlug ? '#inbox'
@@ -76,7 +107,7 @@ function App() {
     return () => window.removeEventListener('hashchange', navigate)
   }, [])
   return (
-    <>
+    <ActionFeedback.Provider value={notify}><SendWindow>
       <header className="masthead">
         <div className="masthead-inner">
           <nav aria-label="Demo views">
@@ -112,13 +143,17 @@ function App() {
               ? list.map((entry) => entry.slug === contractor.slug ? contractor : entry)
               : [...list, contractor])} />}
       </main>
+      <div className="action-feedback" data-result={notice?.result}>
+        <span role="status" aria-atomic="true">{notice?.message}</span>
+        {notice && <button type="button" aria-label="Dismiss message" onClick={() => setNotice(undefined)}>×</button>}
+      </div>
       <footer>{isFixtureMode ? 'Fixture mode. Reports are simulated and reset on reload.' : 'Hackathon demo using fictional properties and a simulated contractor.'}</footer>
-    </>
+    </SendWindow></ActionFeedback.Provider>
   )
 }
 
 function ResidentPortal({ active }: { active: boolean }) {
-  const home = useLoad(loadHome)
+  const home = useLoad(loadHome, 'Home details')
   if (home.failed) {
     return <section className="panel"><p role="alert">Your home details could not be loaded.</p><button onClick={home.reload}>Try again</button></section>
   }
@@ -128,7 +163,7 @@ function ResidentPortal({ active }: { active: boolean }) {
 }
 
 function ResidentAvailability() {
-  const home = useLoad(loadHome)
+  const home = useLoad(loadHome, 'Home details')
   const resident = home.data?.residents[0]
   if (resident) return <TenantTimetable unitId={unitId} residentId={resident.id} />
   return <section className="panel">
@@ -158,6 +193,8 @@ function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Re
 }
 
 function Report({ home, active }: { home: UnitContext; active: boolean }) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
   const [step, setStep] = useState(0)
   const [issue, setIssue] = useState('')
   const [hotWater, setHotWater] = useState<boolean | null>(null)
@@ -175,7 +212,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   } | null>(null)
   const [resident, setResident] = useState(home.residents[0])
   const [profileSaving, setProfileSaving] = useState(false)
-  const profileSave = useRef<Promise<void> | null>(null)
+  const profileSave = useRef<Promise<boolean> | null>(null)
   const verifyProfile = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -217,12 +254,17 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   function saveProfile(changes: ResidentProfileChanges) {
     if (profileSave.current) return profileSave.current
     setProfileSaving(true)
-    profileSave.current = api.updateResidentProfile(home.unit_id, resident.id, changes).then((updated) => {
+    profileSave.current = beforeSend('Save your profile edits').then(async (send) => {
+      if (!send) return false
+      const updated = await api.updateResidentProfile(home.unit_id, resident.id, changes)
       applyResident(updated)
+      notify('success', 'Your details were saved.')
       verifyProfile.current = false
+      return true
     }).catch((failure: unknown) => {
       // A lost PATCH response can follow a successful write. Recheck before granting new consent.
       verifyProfile.current = true
+      notify('error', 'Your profile update could not be confirmed.')
       throw failure
     }).finally(() => {
       profileSave.current = null
@@ -247,7 +289,10 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     submitting.current = true
     setBusy(true)
     try {
-      const extraction = isFixtureMode ? null : await api.extractIntake(input).catch(() => null)
+      const extraction = isFixtureMode ? null : await api.extractIntake(input).catch(() => {
+        notify('error', 'Automatic review is unavailable. You can review your report manually.')
+        return null
+      })
       const result = extraction?.result
       if (result?.safety_signal === 'possible_gas_leak') {
         setSafety(true)
@@ -259,6 +304,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         return
       }
       setReviewed(makeIntakeReview(input, result))
+      if (extraction) notify('success', 'Your summary is ready to review.')
       setStep(1)
     } finally {
       submitting.current = false
@@ -287,6 +333,10 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   }
 
   async function save(event: FormEvent) {
+    function showError(message: string) {
+      setError(message)
+      notify('error', message)
+    }
     event.preventDefault()
     if (submitting.current || (step === 2 && profileSave.current)) return
     if (step === 1 && reviewed && possibleGasLeak([reviewed.description, reviewed.symptoms, reviewed.availability].join('\n'))) {
@@ -298,6 +348,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     setError('')
     try {
       if (step === 1 && reviewed) {
+        if (!await beforeSend('Save your heating report')) return
         const created = await api.createCase({
           unit_id: home.unit_id, resident_id: resident.id, issue_type: 'heating_repair',
           description: reviewed.description.trim(), source_channel: 'portal_chat',
@@ -305,18 +356,20 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           urgency: reviewed.urgency || 'normal',
         })
         setCurrent(created)
+        notify('success', 'Your heating report was saved.')
         setStep(2)
       } else if (current && request && handoffReady && approved) {
+        if (!await beforeSend('Send repair request to ' + request.partner.name)) return
         if (!dispatch && verifyProfile.current) {
           const context = await api.getUnitContext(home.unit_id).catch(() => null)
           const latest = context?.residents.find((item) => item.id === resident.id)
           if (!latest) {
-            setError('Your saved details could not be checked. Please try again.')
+            showError('Your saved details could not be checked. Please try again.')
             return
           }
           verifyProfile.current = false
           if (applyResident(latest)) {
-            setError('Your saved details changed. Review them and approve sharing again.')
+            showError('Your saved details changed. Review them and approve sharing again.')
             return
           }
         }
@@ -327,13 +380,16 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         setDispatch(attempt)
         const result = await api.approveSharing(current.id, attempt.body)
         setCurrent(result)
-        if (!result.partner_job_id) setError('The contractor has not confirmed receipt. Check this case before trying again.')
+        if (result.partner_job_id) notify('success', 'The contractor received your repair request.')
+        else showError('The contractor has not confirmed receipt. Check this case before trying again.')
       }
     } catch {
       if (current) {
         const latest = await api.getCase(current.id).catch(() => null)
         if (latest?.partner_job_id || latest?.status === 'NEEDS_HUMAN_REVIEW') {
           setCurrent(latest)
+          if (latest.partner_job_id) notify('success', 'The contractor received your repair request.')
+          else notify('error', 'Dispatch needs manager review.')
         } else if (latest && !latest.sharing_approval && latest.partner_id !== current.partner_id) {
           const context = await api.getUnitContext(home.unit_id).catch(() => null)
           const updated = context?.residents.find((item) => item.id === resident.id)
@@ -341,13 +397,14 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           setCurrent(latest)
           setApproved(false)
           setDispatch(null)
-          if (latest.sharing_request) setError('The contractor changed. Review and approve sharing again.')
+          if (latest.sharing_request) showError('The contractor changed. Review and approve sharing again.')
+          else notify('error', noContractorsLabel)
         } else {
           if (latest?.sharing_approval) setCurrent(latest)
-          setError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
+          showError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
         }
       } else {
-        setError('Your case could not be saved. Your report is still here.')
+        showError('Your case could not be saved. Your report is still here.')
       }
     } finally {
       submitting.current = false
@@ -524,7 +581,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
 
 function Inbox({ partnerSlug }: { partnerSlug: string }) {
   const loadJobs = useCallback(() => api.listPartnerJobs(partnerSlug), [partnerSlug])
-  const jobs = useLoad(loadJobs)
+  const jobs = useLoad(loadJobs, 'Contractor inbox')
   return (
     <section className="inbox" aria-label="Incoming repair jobs">
       <div className="inbox-heading"><h2>Incoming jobs</h2>
@@ -580,6 +637,8 @@ function syntheticInvoice(jobId: string): RepairInvoiceInput {
 }
 
 function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerSlug: string }) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
   const [job, setJob] = useState(initial)
   const [pending, setPending] = useState<PartnerAction | null>(null)
   const [retry, setRetry] = useState<PartnerCommand | null>(null)
@@ -603,14 +662,21 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
     setError('')
     setConfirmation('')
     try {
+      if (!await beforeSend(labels[action] + ' · ' + job.id)) return
       const updated = await api.updatePartnerJob(partnerSlug, job.id, command)
       setJob(updated)
       setRetry(null)
       setEditing(null)
       const acknowledged = jobChecks[updated.status]
       if (acknowledged?.action === action) setConfirmation(acknowledged.confirmation)
+      notify('success', {
+        accept: 'Repair assignment accepted.', reject: 'Repair assignment declined.',
+        'offer-slots': 'Appointment times sent to the resident.', start: 'Repair start recorded.',
+        complete: 'Completion report saved.', invoice: 'Invoice submitted.',
+      }[action])
     } catch (failure) {
       setRetry(command)
+      notify('error', labels[action] + ' could not be confirmed. You can retry.')
       setError(failure instanceof Error ? failure.message : 'The partner action could not be confirmed.')
     } finally {
       submitting.current = false
@@ -631,12 +697,15 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
         : event.type === 'partner.accepted')
       if (confirmed) {
         setConfirmation(check.confirmation)
+        notify('success', check.confirmation)
       } else {
         setRetry({ action: check.action })
         setError(check.missing + ' Retry sending it.')
+        notify('error', check.missing)
       }
     } catch {
       setError('The resident case could not be checked. Try again.')
+      notify('error', 'The resident case could not be checked.')
     } finally {
       submitting.current = false
       setChecking(false)
@@ -704,13 +773,13 @@ function Manager(props: {
   loadError: boolean
   onSaved: (contractor: Contractor) => void
 }) {
-  const home = useLoad(loadHome)
-  const repairs = useLoad(api.listManagerRepairs)
+  const home = useLoad(loadHome, 'Home details')
+  const repairs = useLoad(api.listManagerRepairs, 'Repairs')
   return (
     <div>
       <ManagerContractors {...props} region={home.data?.property.region ?? ''} onSaved={(contractor) => {
         props.onSaved(contractor)
-        repairs.reload()
+        repairs.reloadSilently()
       }} />
       <section className="inbox" aria-label="Repairs by contractor">
         <div className="inbox-heading">
@@ -733,19 +802,17 @@ function Manager(props: {
 }
 
 function ResidentCases() {
-  const home = useLoad(loadHome)
-  const cases = useLoad(loadUnitCases)
-  const residentId = home.data?.residents[0]?.id
-  const ownCases = cases.data?.filter((item) => item.resident_id === residentId)
+  const cases = useLoad(loadResidentCases, 'Your cases')
+  const ownCases = cases.data
 
   return (
     <section className="inbox" aria-label="Resident cases">
       <div className="inbox-heading">
         <h2 className="case-category">Heating cases</h2>
-        <button className="secondary" onClick={() => { home.reload(); cases.reload() }}>Refresh cases</button>
+        <button className="secondary" disabled={cases.refreshing} onClick={cases.reload}>Refresh cases</button>
       </div>
-      {home.failed || cases.failed ? <p className="panel error" role="alert">Your cases could not be loaded. Try refreshing.</p>
-        : !home.data || !ownCases ? <p className="panel" role="status">Loading your cases…</p>
+      {cases.failed ? <p className="panel error" role="alert">Your cases could not be loaded. Try refreshing.</p>
+        : !ownCases ? <p className="panel" role="status">Loading your cases…</p>
           : !ownCases.length ? <p className="panel">No heating reports yet.</p>
             : ownCases.map((item) => <ResidentCase key={item.id} item={item} />)}
     </section>

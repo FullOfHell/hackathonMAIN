@@ -170,3 +170,43 @@ input { accent-color: #942f1d; }
 .manager-repair-group + .manager-repair-group { margin-top: 1rem; }
 .manager-repair-group > h3 { margin: 0 .15rem; color: #693323; font-size: 1.15rem; }
 .manager-repair-group h4 { margin: 0; font-size: 1rem; }
+
+.action-feedback {
+  position: fixed; z-index: 10; right: 1rem; bottom: max(1rem, env(safe-area-inset-bottom));
+  max-width: min(26rem, calc(100vw - 2rem)); display: flex; align-items: center; gap: .75rem;
+}
+.action-feedback[data-result] {
+  padding: .65rem .75rem .65rem 1rem; border-radius: .7rem; box-shadow: 0 4px 18px #30231e30;
+  color: white; background: #315339;
+}
+.action-feedback[data-result="error"] { background: #832d22; }
+.action-feedback button { color: inherit; background: transparent; padding: .3rem .55rem; font-size: 1.2rem; }
+.action-feedback button:focus-visible { outline-color: white; }
+.send-windows {
+  position: fixed; z-index: 11; top: env(safe-area-inset-top, 0px); right: 1rem; padding-top: 1rem;
+  pointer-events: none;
+  display: grid; gap: .5rem; max-width: calc(100vw - 2rem); max-height: 80vh; overflow-y: auto;
+}
+.send-window {
+  pointer-events: auto;
+  display: grid; gap: .4rem; padding: .8rem 1rem; background: #fffcf8; color: #30231e;
+  border: 1px solid #bc9e8c; border-radius: .7rem; box-shadow: 0 4px 18px #30231e30;
+}
+.send-window [role="status"] { font-weight: 650; }
+.send-window > div { display: flex; gap: .5rem; }
+.send-window button:first-child { background: #f5ebe1; color: #693323; }
+.send-window-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.send-timer { display: block; height: 3px; margin-top: .25rem; background: #e7d5c7; border-radius: 2px; overflow: hidden; }
+.send-timer > span { display: block; height: 100%; background: #8b361f; transform-origin: left; }
+@media (prefers-reduced-motion: no-preference) {
+  .send-window, .action-feedback[data-result] { animation: feedback-appear 220ms ease-out; }
+  .send-timer > span { animation: send-timer-drain linear both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .send-timer { display: none; }
+}
+@keyframes feedback-appear {
+  from { opacity: 0; transform: translateY(-1rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes send-timer-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useActionFeedback, useBeforeSend } from './actionFeedback'
 import type { FormEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { contractorInboxHref } from './repairNotifications'
@@ -12,6 +13,8 @@ interface Props {
 }
 
 export function ManagerContractors({ region, contractors, loadError, onSaved }: Props) {
+  const beforeSend = useBeforeSend()
+  const notify = useActionFeedback()
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState<Contractor>()
   const [regionDraft, setRegionDraft] = useState<string>()
@@ -39,21 +42,27 @@ export function ManagerContractors({ region, contractors, loadError, onSaved }: 
       longitude: Number(fields.get('longitude')),
     }
     try {
+      const name = editing?.name ?? String(fields.get('name')).trim()
+      if (!await beforeSend(editing ? `Update matching details for ${name}` : `Add contractor ${name}`)) return
       const contractor = editing
         ? await api.updateContractorRouting(editing.slug, routing)
         : await api.addContractor({
-          name: String(fields.get('name')).trim(),
+          name,
           slug: String(fields.get('slug')).trim(),
           region: String(fields.get('region')).trim(),
           routing,
         })
       onSaved(contractor)
-      setStatus(editing ? `Matching details saved for ${contractor.name}.` : `${contractor.name} was added.`)
+      const message = editing ? `Matching details saved for ${contractor.name}.` : `${contractor.name} was added.`
+      notify('success', message)
+      setStatus(message)
       form.reset()
       setRegionDraft(undefined)
       setEditing(undefined)
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not save the contractor.')
+      const message = failure instanceof Error ? failure.message : 'Could not save the contractor.'
+      notify('error', message)
+      setError(message)
     } finally {
       setSaving(false)
     }
