@@ -5,12 +5,13 @@ import { VoiceDraft } from './VoiceDraft'
 import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
 import { ManagerContractors } from './ManagerContractors'
+import { ContractorTimetable, TenantTimetable } from './Timetable'
 import { ActionFeedback, feedbackDuration, useActionFeedback, useBeforeSend } from './actionFeedback'
 import { SendWindow } from './SendWindow'
 import type { ActionResult } from './actionFeedback'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
-import { caseStatusLabel, formatTime, slotLabel, statusLabel } from './caseDisplay'
+import { caseStatusLabel, formatTime, noContractorsLabel, slotLabel, statusLabel } from './caseDisplay'
 import { availabilityPrefix, intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
@@ -68,6 +69,7 @@ const loadResidentCases = async () => {
 const defaultInbox = { slug: defaultContractorSlug, name: 'HeatFix Aachen' }
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
+  '#availability': 'Your availability',
   '#manager': 'Property manager',
 }
 
@@ -81,7 +83,8 @@ function App() {
   }, [notice])
   const [hash, setHash] = useState(() => location.hash)
   const partnerSlug = contractorInboxSlug(hash)
-  const view = partnerSlug ? '#inbox' : (hash === '#cases' || hash === '#manager' ? hash : '#report')
+  const view = partnerSlug ? '#inbox'
+    : (hash === '#cases' || hash === '#availability' || hash === '#manager' ? hash : '#report')
   const [contractors, setContractors] = useState<Contractor[]>()
   const [contractorLoadFailed, setContractorLoadFailed] = useState(false)
   const inboxes = contractors ?? [defaultInbox]
@@ -112,6 +115,7 @@ function App() {
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
               <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
+              <a href="#availability" aria-current={view === '#availability' ? 'page' : undefined}>Availability</a>
               <span className="contractor-inbox-picker">
                 <span aria-hidden="true">{inbox?.name ?? 'Contractors'}</span>
                 <select className="contractor-inbox-select" aria-label="Contractor inbox" title="Choose a contractor inbox"
@@ -131,9 +135,13 @@ function App() {
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
         {view === '#cases' && <ResidentCases />}
+        {view === '#availability' && <ResidentAvailability />}
         {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
         {view === '#manager' && <Manager contractors={contractors} loadError={contractorLoadFailed}
-          onAdded={(contractor) => setContractors((list) => [...(list ?? []), contractor])} />}
+          onSaved={(contractor) => setContractors((list = []) =>
+            list.some((entry) => entry.slug === contractor.slug)
+              ? list.map((entry) => entry.slug === contractor.slug ? contractor : entry)
+              : [...list, contractor])} />}
       </main>
       <div className="action-feedback" data-result={notice?.result}>
         <span role="status" aria-atomic="true">{notice?.message}</span>
@@ -152,6 +160,17 @@ function ResidentPortal({ active }: { active: boolean }) {
   if (!home.data) return <section className="panel"><p role="status">Loading your home details…</p></section>
   if (!home.data.residents.length) return <section className="panel"><p role="alert">No resident is configured for this unit.</p></section>
   return <Report home={home.data} active={active} />
+}
+
+function ResidentAvailability() {
+  const home = useLoad(loadHome, 'Home details')
+  const resident = home.data?.residents[0]
+  if (resident) return <TenantTimetable unitId={unitId} residentId={resident.id} />
+  return <section className="panel">
+    {home.failed ? <><p role="alert">Your resident details could not be loaded.</p>
+      <button className="secondary" onClick={home.reload}>Try again</button></>
+      : <p role="status">{home.data ? 'No resident is configured for this unit.' : 'Loading your home details…'}</p>}
+  </section>
 }
 
 function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Resident) {
@@ -203,6 +222,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const isShared = (field: (typeof fields)[number]) => field.required || selected.includes(field.key)
   const sharedFields = fields.filter(isShared)
   const request = current?.sharing_request ?? (current?.status === 'PARTNER_REQUESTED' ? dispatch?.request : undefined)
+  const noContractor = current?.status === 'NO_PROVIDER_AVAILABLE'
   const awaitingConsentReceipt = Boolean(dispatch && !current?.sharing_approval)
   const handoffReady = Boolean(request && fields.every((field) => !field.required || field.value))
   const hotWaterReported = /\bhot[\s-]+water\b/i.test(issue)
@@ -377,8 +397,8 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           setCurrent(latest)
           setApproved(false)
           setDispatch(null)
-          showError(latest.sharing_request ? 'The contractor changed. Review and approve sharing again.'
-            : 'No contractor covers the saved repair address.')
+          if (latest.sharing_request) showError('The contractor changed. Review and approve sharing again.')
+          else notify('error', noContractorsLabel)
         } else {
           if (latest?.sharing_approval) setCurrent(latest)
           showError('The contractor’s receipt could not be confirmed. You can retry sending this same case.')
@@ -386,6 +406,22 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       } else {
         showError('Your case could not be saved. Your report is still here.')
       }
+    } finally {
+      submitting.current = false
+      setBusy(false)
+    }
+  }
+
+  async function checkContractors() {
+    if (!current || submitting.current || profileSave.current) return
+    submitting.current = true
+    setBusy(true)
+    setError('')
+    try {
+      setCurrent(await api.getCase(current.id))
+      setApproved(false)
+    } catch {
+      setError('Contractor availability could not be checked. Please try again.')
     } finally {
       submitting.current = false
       setBusy(false)
@@ -403,7 +439,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const stepHeading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
     if (step > 0) stepHeading.current?.focus()
-  }, [step, sent])
+  }, [step, sent, noContractor])
 
   return (
     <div className="report-layout">
@@ -509,13 +545,19 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           {error && <p className="error" role="alert">{error}</p>}
           <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
         </form> : <div>
-          <h2 ref={stepHeading} tabIndex={-1}>{current.status === 'NO_PROVIDER_AVAILABLE' ? 'No contractors are available in this location' : 'Report saved for review'}</h2>
-          <p>{current.status === 'NO_PROVIDER_AVAILABLE'
-            ? 'Your report was saved.'
+          <h2 ref={stepHeading} tabIndex={-1}>{noContractor ? noContractorsLabel : 'Report saved for review'}</h2>
+          <p>{noContractor
+            ? 'Your report was saved. You can check again for a contractor who serves your address.'
             : `Case ${current.id}. Contractor receipt has not been confirmed.`}</p>
           <p>{current.description}</p>
           <CaseTimeline caseId={current.id} />
-          <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="actions">
+            {noContractor && <button type="button" onClick={() => void checkContractors()} disabled={busy || profileSaving}>
+              {busy ? 'Checking…' : 'Check contractor availability'}
+            </button>}
+            <button className="secondary" onClick={reset} disabled={busy}>Report another issue</button>
+          </div>
         </div>)}
         {sent && current && <div>
           <h2 ref={stepHeading} tabIndex={-1}>{isFixtureMode ? 'Demo job created' : 'Your contractor has your report'}</h2>
@@ -530,6 +572,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         <h2>Your home</h2>
         <ResidentProfileEditor resident={resident} homeDetails={residentHomeDetails(home, resident)} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
           onSave={saveProfile} />
+        {!isFixtureMode && <p className="availability-link"><a href="#availability">Set your repair availability</a></p>}
         {awaitingConsentReceipt && !busy && <p className="muted">Retry the handoff to confirm consent before editing your details.</p>}
       </aside>
     </div>
@@ -606,7 +649,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   const [confirmation, setConfirmation] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
-  const actions = retry ? [retry.action] : availableActions[job.status] ?? []
+  const actions = retry ? [retry.action] : (availableActions[job.status] ?? [])
+    .filter((action) => isFixtureMode || action !== 'offer-slots')
   const check = jobChecks[job.status]
   const invoice = syntheticInvoice(job.id)
 
@@ -685,6 +729,9 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
       {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
+      {!isFixtureMode && ['accepted', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
+        <ContractorTimetable slug={partnerSlug} jobId={job.id}
+          onBooked={() => setJob((item) => ({ ...item, status: 'scheduled' }))} />}
       {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
         event.preventDefault()
         if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })
@@ -724,14 +771,14 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
 function Manager(props: {
   contractors: Contractor[] | undefined
   loadError: boolean
-  onAdded: (contractor: Contractor) => void
+  onSaved: (contractor: Contractor) => void
 }) {
   const home = useLoad(loadHome, 'Home details')
   const repairs = useLoad(api.listManagerRepairs, 'Repairs')
   return (
     <div>
-      <ManagerContractors {...props} region={home.data?.property.region ?? ''} onAdded={(contractor) => {
-        props.onAdded(contractor)
+      <ManagerContractors {...props} region={home.data?.property.region ?? ''} onSaved={(contractor) => {
+        props.onSaved(contractor)
         repairs.reloadSilently()
       }} />
       <section className="inbox" aria-label="Repairs by contractor">

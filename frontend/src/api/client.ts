@@ -6,6 +6,8 @@ import type {
   ContactChannel,
   Contractor,
   ContractorInput,
+  ContractorRouting,
+  ContractorTimetableWeek,
   CreateCaseRequest,
   IntakeRequest,
   IntakeResponse,
@@ -18,11 +20,17 @@ import type {
   ResidentProfileChanges,
   ResidentProfileDraft,
   SharingApprovalRequest,
+  TimetableWeek,
   UnitContext,
 } from '../types/domain'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
 export const isFixtureMode = !apiBaseUrl
+
+const availabilityPath = (unitId: string, residentId: string) =>
+  `/api/units/${encodeURIComponent(unitId)}/residents/${encodeURIComponent(residentId)}/availability`
+const jobAvailabilityPath = (slug: string, jobId: string) =>
+  `${partnerJobsPath(slug)}/${encodeURIComponent(jobId)}/tenant-availability`
 const demoCases = new Map<string, MaintenanceCase>()
 const demoJobs = new Map<string, PartnerInboxJob>()
 const demoEvents = new Map<string, CaseEvent[]>()
@@ -214,6 +222,26 @@ export const api = {
   addContractor: (body: ContractorInput): Promise<Contractor> => request('/api/manager/contractors', {
     method: 'POST', body: JSON.stringify(body),
   }),
+
+  updateContractorRouting: (slug: string, body: ContractorRouting): Promise<Contractor> =>
+    request(`/api/manager/contractors/${encodeURIComponent(slug)}/routing`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
+
+  getAvailability: (unitId: string, residentId: string, week: number): Promise<TimetableWeek> =>
+    request(`${availabilityPath(unitId, residentId)}?week=${week}&acting_resident_id=${encodeURIComponent(residentId)}`),
+
+  saveAvailability: (unitId: string, residentId: string, weekStart: string, starts: string[]): Promise<TimetableWeek> =>
+    request(availabilityPath(unitId, residentId), {
+      method: 'PUT',
+      body: JSON.stringify({ acting_resident_id: residentId, week_start: weekStart, available_starts: starts }),
+    }),
+
+  getJobAvailability: (slug: string, jobId: string, week: number): Promise<ContractorTimetableWeek> =>
+    request(`${jobAvailabilityPath(slug, jobId)}?week=${week}`),
+
+  bookTenantVisit: (slug: string, jobId: string, start: string): Promise<NonNullable<MaintenanceCase['appointment']>> =>
+    request(jobAvailabilityPath(slug, jobId) + '/book', { method: 'POST', body: JSON.stringify({ start }) }),
 
   listPartnerJobs: (partnerSlug: string): Promise<PartnerInboxJob[]> =>
     apiBaseUrl ? request(partnerJobsPath(partnerSlug))

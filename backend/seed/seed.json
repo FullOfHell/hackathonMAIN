@@ -10,6 +10,9 @@
       "access_details": "Caretaker Jonas Weber (+49 241 00000000) can open the boiler room; key safe at side entrance, code released by the property manager after booking."
     }
   ],
+  "repair_locations": [
+    {"address": "Musterstraße 12, 52062 Aachen", "latitude": 50.775, "longitude": 6.083}
+  ],
   "units": [
     {"id": "unit_4b", "property_id": "prop_musterstr_12", "unit_label": "4B", "floor": 2, "size_sqm": 68},
     {"id": "unit_2a", "property_id": "prop_musterstr_12", "unit_label": "2A", "floor": 1, "size_sqm": 54}

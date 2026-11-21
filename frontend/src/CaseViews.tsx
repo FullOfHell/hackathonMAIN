@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { api, invoiceUrl } from './api/client'
+import { api, invoiceUrl, isFixtureMode } from './api/client'
 import { useActionFeedback, useBeforeSend } from './actionFeedback'
 import { caseStatusLabel, formatTime, slotLabel, timelineEventLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
@@ -161,7 +161,8 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
       </form> : current.status === 'DECLINED' ? <p role="status"><strong>Declined by contractor</strong>. No appointment was booked.</p>
         : current.status === 'NEEDS_HUMAN_REVIEW' || current.status === 'FAILED' || current.status === 'CANCELLED'
           ? <p role="status">{caseStatusLabel(current.status)}. No appointment was confirmed.</p>
-          : <p role="status">Waiting for your contractor to offer appointment times.</p>}
+          : isFixtureMode ? <p role="status">Waiting for your contractor to offer appointment times.</p>
+            : <p role="status">Your contractor can book a time from <a href="#availability">your availability</a>.</p>}
       <RepairOutcome item={current} />
       <CaseTimeline caseId={caseId} revision={timelineRevision} />
     </section>

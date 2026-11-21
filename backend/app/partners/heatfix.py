@@ -11,6 +11,7 @@ from app.db import get_db, now_iso
 from app.integrations.connector import callback_url, partner_webhook_secret
 from app.partners.registry import local_capabilities
 from app.schemas import BuildingJobScope, FailureReason, PartnerJobRequest, RepairInvoice, RepairReport, SlotChoice
+from app.services.scheduling import reservations
 
 router = APIRouter(prefix="/partners/{slug}", tags=["simulated delivery partners"])
 
@@ -234,8 +235,13 @@ def book(job_id: str, body: SlotChoice, partner: DeliveryPartner, conn=Depends(g
         else:
             if job["status"] != "slots_offered":
                 raise HTTPException(409, "job is no longer offering slots")
-            if not any(slot["slot_id"] == body.slot_id for slot in job["slots"]):
+            slot = next((option for option in job["slots"] if option["slot_id"] == body.slot_id), None)
+            if not slot:
                 raise HTTPException(422, "slot was not offered for this job")
+            case = conn.execute("SELECT resident_id FROM cases WHERE id=? AND partner_job_id=?",
+                                (job["request_id"], job_id)).fetchone()
+            if case and reservations(conn, case["resident_id"], slot["start"], slot["end"], job["request_id"]):
+                raise HTTPException(409, "The resident already has a visit at this time.")
             conn.execute("INSERT INTO heatfix_bookings (job_id,slot_id) VALUES (?,?)", (job_id, body.slot_id))
             conn.execute("UPDATE partner_jobs SET status='scheduled' WHERE id=?", (job_id,))
     return {"job_id": job_id, "status": "scheduled", "slot_id": body.slot_id}

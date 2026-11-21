@@ -13,7 +13,7 @@ from app.schemas import (
     ResidentSlotChoice, SharingApprovalIn,
 )
 from app.services import cases as svc
-from app.services import outages
+from app.services import outages, scheduling
 from app.states import CaseStatus, check_transition
 
 router = APIRouter(prefix="/api", tags=["centrix"])
@@ -30,12 +30,13 @@ UNAPPROVED_REPAIR_STATES = {CaseStatus.AWAITING_SHARING_APPROVAL, CaseStatus.NO_
 
 
 def _current_contractor(conn, case):
-    """Re-evaluate saved address edits before an unapproved case is shared."""
+    """Re-evaluate the address and contractor ranking before sharing."""
     ctx = svc.unit_context(conn, case["unit_id"])
     resident = next((r for r in ctx["residents"] if r["id"] == case["resident_id"]), None)
     if not resident:
         return None
-    partner = svc.select_partner(conn, case["issue_type"], svc.repair_region(conn, ctx, resident))
+    region = svc.repair_region(conn, ctx, resident)
+    partner = svc.select_partner(conn, case["issue_type"], region, resident.get("address") or ctx["property"]["address"])
     return partner["id"] if partner else None
 
 
@@ -139,11 +140,11 @@ def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(g
                      {"channel": body.source_channel, "issue_type": body.issue_type, "unit_id": body.unit_id})
     svc.transition(conn, case_id, CaseStatus.TRIAGED, "system")
     region = svc.repair_region(conn, ctx, resident)
-    partner = svc.select_partner(conn, body.issue_type, region)
+    partner = svc.select_partner(conn, body.issue_type, region, resident.get("address") or ctx["property"]["address"])
     if partner:
         conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner["id"], case_id))
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
-                       {"partner_id": partner["id"], "reason": "service_type + region match"})
+                       {"partner_id": partner["id"], "reason": "contractor matching for service and region"})
         if svc.normalize_location(region) == svc.normalize_location(ctx["property"]["region"]):
             outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
     else:
@@ -233,7 +234,7 @@ def approve_sharing(case_id: str, body: SharingApprovalIn, conn=Depends(get_db),
         if case["status"] in UNAPPROVED_REPAIR_STATES:
             partner_id = _current_contractor(conn, case)
             if not partner_id:
-                raise HTTPException(409, "No contractor covers the saved repair address.")
+                raise HTTPException(409, "No contractors available for this service and repair address.")
             previewed_partner = case["partner_id"] if body.expected_partner_id is None else body.expected_partner_id
             if previewed_partner != partner_id:
                 raise HTTPException(409, "The contractor changed. Review the sharing details again.")
@@ -352,12 +353,15 @@ def select_slot(case_id: str, body: ResidentSlotChoice, conn=Depends(get_db),
         case = _case_or_404(conn, case_id)
     if body.resident_id != case["resident_id"]:
         raise HTTPException(403, "only the reporting resident can select a slot")
-    if not any(slot["slot_id"] == body.slot_id for slot in case["slots"]):
+    slot = next((option for option in case["slots"] if option["slot_id"] == body.slot_id), None)
+    if not slot:
         raise HTTPException(422, "slot was not offered for this case")
     if _already_booked(case, body.slot_id):
         return case
 
     check_transition(CaseStatus(case["status"]), CaseStatus.SCHEDULED)
+    if scheduling.reservations(conn, body.resident_id, slot["start"], slot["end"], case_id):
+        raise HTTPException(409, "You already have a visit at this time.")
     partner = conn.execute("SELECT base_url FROM partners WHERE id=?", (case["partner_id"],)).fetchone()
     # The partner owns the booking and can safely repeat its confirmation after a timeout.
     try:
@@ -376,6 +380,8 @@ def select_slot(case_id: str, body: ResidentSlotChoice, conn=Depends(get_db),
         case = _case_or_404(conn, case_id)
         if _already_booked(case, body.slot_id):
             return case
+        if scheduling.reservations(conn, body.resident_id, slot["start"], slot["end"], case_id):
+            raise HTTPException(409, "You already have a visit at this time.")
         svc.transition(conn, case_id, CaseStatus.SCHEDULED, f"resident:{body.resident_id}",
                        {"job_id": case["partner_job_id"], "slot_id": body.slot_id})
         conn.execute("INSERT INTO appointments (case_id,slot_id,booked_at) VALUES (?,?,?)",

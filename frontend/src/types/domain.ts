@@ -221,16 +221,25 @@ export interface PartnerJob {
   callback_url: string
 }
 
+export interface ContractorRouting {
+  latitude: number
+  longitude: number
+  estimated_price_eur: number
+  quality_rating: number
+}
+
 export interface ContractorInput {
   name: string
   slug: string
   region: string
+  routing: ContractorRouting
 }
 
 export interface Contractor {
   name: string
   slug: string
   regions: string[]
+  routing?: ContractorRouting
 }
 
 export interface PartnerInboxJob {
@@ -239,6 +248,26 @@ export interface PartnerInboxJob {
   status: string
   received_at: string
   payload: PartnerJob
+}
+
+export interface TimetableSlot {
+  start: string
+  end: string
+  day: number
+  hour: number
+  available: boolean
+  booked: boolean
+  past: boolean
+}
+
+export interface TimetableWeek {
+  week_start: string
+  slots: TimetableSlot[]
+}
+
+export interface ContractorTimetableWeek extends TimetableWeek {
+  can_book: boolean
+  appointment: MaintenanceCase['appointment']
 }
 
 export type PartnerAction = 'accept' | 'reject' | 'offer-slots' | 'start' | 'complete' | 'invoice'
