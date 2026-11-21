@@ -1,5 +1,9 @@
 import type { TimetableSlot } from './types/domain'
 
+export function hasAvailableSlot(slots: TimetableSlot[], edits: Record<string, boolean> = {}) {
+  return slots.some((slot) => !slot.past && !slot.booked && (edits[slot.start] ?? slot.available))
+}
+
 export function clearSelections(slots: TimetableSlot[]): Record<string, boolean> {
   const edits: Record<string, boolean> = {}
   for (const slot of slots) {

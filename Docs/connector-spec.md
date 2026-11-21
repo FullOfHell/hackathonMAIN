@@ -8,7 +8,7 @@ The SQLite registry loads new simulated partners from `backend/seed/partner-regi
 
 | Action | Request | Result |
 | --- | --- | --- |
-| Report availability | `POST /api/cases` with optional `availability_preferences` (array of strings, default `[]`) | The case stores the preferences. Include them in the preview of the `issue` field the resident approves for sharing. |
+| Save calendar availability | `PUT /api/units/{unit_id}/residents/{resident_id}/availability` | The connected report wizard requires a saved future unbooked slot. Optional free-text `availability_preferences` remain part of case intake and are distinct from dated slots. |
 | Accept or reject | `POST /partners/heatfix/connector/jobs/{job_id}/accept` or `/reject`, empty body | Acceptance appears as `partner.accepted` in the case timeline. Rejection moves the case to `DECLINED`. |
 | Offer times | `POST /partners/heatfix/connector/jobs/{job_id}/offer-slots`, empty body, after acceptance | HeatFix returns the job and two slots. The callback moves the case to `SLOTS_OFFERED`. |
 | Read the offer or appointment | `GET /api/cases/{case_id}` | `slots` is an array of objects with `slot_id`, `start`, and `end`. It starts empty. `appointment` starts as `null` and contains those same fields plus `case_id` and `booked_at` after booking. All times include a UTC offset or `Z`. |
@@ -61,7 +61,7 @@ Linked timelines persist `building.repair_updated` on status changes. Shared clo
 
 ## Contractor shown before sharing
 
-Heating reports use the tenant’s saved repair address when one is supplied. Include the city at the end, for example `Demo Street 15, 40210 Düsseldorf`. The portal sends `expected_partner_id` with sharing approval. A change to the recipient returns 409 until the tenant approves the current contractor. Consent and order retries keep the recipient already recorded.
+Heating reports use the tenant’s saved repair address when one is supplied. Include the city at the end, for example `Demo Street 15, 40210 Düsseldorf`. The portal sends `expected_partner_id` with sharing approval. A change to the recipient returns 409 until the tenant approves the current contractor. Consent and order retries keep the recipient already recorded. Case reads expose `contractor_name` for the named recipient shown on the report confirmation.
 
 ## Failures and human review
 
@@ -80,7 +80,7 @@ For saved local demo jobs, HTTP callback URLs on `localhost` and `127.0.0.1` can
 
 In **Manager → Contractors**, enter a company name, city and unique inbox slug. **Open inbox** shows the contractor's jobs. **Delete** deactivates the contractor and removes their assigned repairs from the manager list. Existing repair records and previously issued jobs remain readable.
 
-`GET /api/manager/contractors` lists active local delivery contractors. `POST /api/manager/contractors` accepts `name`, `region` (the city), and `slug`. The slug uses lowercase letters, digits and hyphen separators. Existing slugs return 409. `DELETE /api/manager/contractors/{slug}` returns the removed slug and can be repeated. It rejects unknown slugs with 404. A removed contractor cannot receive a new job. Replays of an existing job's idempotency key still return that job.
+`GET /api/manager/contractors` lists active local delivery contractors. `POST /api/manager/contractors` accepts `name`, `region` (the city), and `slug`. The slug uses lowercase letters, digits and hyphen separators. Existing slugs return 409. `DELETE /api/manager/contractors/{slug}` returns the removed slug and can be repeated. It rejects unknown slugs with 404. A removed contractor cannot receive a new job. Replays of an existing job's idempotency key still return that job. The manager repair list omits those assigned repairs and retains them in case history.
 
 Register another delivery provider with a connector v1 adapter to reuse the case state machine, consent validation, and n8n workflow.
 
@@ -98,9 +98,9 @@ When no eligible contractor remains, the portal shows **No contractors available
 
 ### Tenant timetable for simulated delivery jobs
 
-In **Review your report**, tenants can optionally select and save one-hour slots before continuing to sharing. The portal uses `GET` and `PUT /api/units/{unit_id}/residents/{resident_id}/availability`. Reads take a week offset from 0 to 2 and the synthetic `acting_resident_id`. Writes send the actor, the displayed Monday as `week_start`, and the selected slot starts as `available_starts`. Starts are returned as UTC timestamps. The timetable uses Monday to Friday, 09:00 to 17:00 Aachen time.
+In **Review your report**, the connected portal requires at least one saved future unbooked slot before continuing to sharing. The slot can be in any of the three displayed weeks. The portal uses `GET` and `PUT /api/units/{unit_id}/residents/{resident_id}/availability`. Reads take a week offset from 0 to 2 and the synthetic `acting_resident_id`. Writes send the actor, the displayed Monday as `week_start`, and the selected slot starts as `available_starts`. Starts are returned as UTC timestamps. The timetable uses Monday to Friday, 09:00 to 17:00 Aachen time.
 
-For a local assigned job, `GET /partners/{slug}/connector/jobs/{job_id}/tenant-availability?week=0` returns the available times after acceptance, including for jobs with outstanding contractor offers, plus the appointment if booked. The inbox shows saved times across all three calendar weeks. `POST` to the same path with `/book` appended and a returned `start` to confirm a visit. FastAPI checks the assignment, sharing approval and slot again at booking. The case and simulated job reach scheduled status in one SQLite transaction. Repeating the same booking returns the saved appointment. The existing connector offer and confirmation endpoints still serve legacy and external workflows.
+For a local assigned job, `GET /partners/{slug}/connector/jobs/{job_id}/tenant-availability?week=0` returns the available times after acceptance, including for jobs with outstanding contractor offers, plus the appointment if booked. The inbox shows saved times across all three calendar weeks. `POST` to the same path with `/book` appended and a returned `start` to confirm a visit. FastAPI checks the assignment, sharing approval and slot again at booking. The case and simulated job reach scheduled status in one SQLite transaction. Repeating the same booking returns the saved appointment. If no mutually available tenant time is returned, an accepted simulated job can offer times from the contractor inbox. The resident confirms one in **My cases** using the existing connector offer and confirmation endpoints. The same endpoints support legacy and external workflows.
 
 ## Adding an internet move-in offer
 

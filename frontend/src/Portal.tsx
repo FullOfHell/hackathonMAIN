@@ -181,6 +181,8 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [hotWater, setHotWater] = useState<boolean | null>(null)
   const [question, setQuestion] = useState<IntakeFollowUp | null>(null)
   const [availabilityPending, setAvailabilityPending] = useState(false)
+  const [availabilityReady, setAvailabilityReady] = useState(false)
+  const canContinueToSharing = isFixtureMode || availabilityReady
   const [reviewed, setReviewed] = useState<IntakeReview | null>(null)
   const [safety, setSafety] = useState(false)
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
@@ -310,7 +312,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       notify('error', message)
     }
     event.preventDefault()
-    if (submitting.current || (step === 1 && availabilityPending) || (step === 2 && profileSave.current)) return
+    if (submitting.current || (step === 1 && (availabilityPending || !canContinueToSharing)) || (step === 2 && profileSave.current)) return
     if (step === 1 && reviewed && possibleGasLeak([reviewed.description, reviewed.symptoms, reviewed.availability].join('\n'))) {
       setSafety(true)
       return
@@ -480,14 +482,14 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
             onChange={(urgency) => setReviewed({ ...reviewed, urgency })} />
           <TenantTimetable unitId={home.unit_id} residentId={resident.id}
             location={repairTimeLocation(residentHomeDetails(home, resident).address)}
-            disabled={busy} onPendingChange={setAvailabilityPending} />
+            disabled={busy} onPendingChange={setAvailabilityPending} onReadyChange={setAvailabilityReady} />
           {safety && <p className="error" role="alert">{safetyMessage}</p>}
           {error && <p className="error" role="alert">{error}</p>}
           {availabilityPending && <p className="muted availability-reminder" role="status">Save or discard your availability changes to continue.</p>}
           <div className="actions">
             <button type="button" className="secondary" disabled={busy || availabilityPending}
               onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back to description</button>
-            <button disabled={busy || availabilityPending || safety || reviewed.description.trim().length < 3}>
+            <button disabled={busy || availabilityPending || !canContinueToSharing || safety || reviewed.description.trim().length < 3}>
               {busy ? 'Saving…' : 'Continue to sharing'}
             </button>
           </div>
@@ -724,7 +726,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
         ['accepted', 'slots_offered', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
         <ContractorTimetable slug={partnerSlug} jobId={job.id} location={repairTimeLocation(property.address)}
           disabled={Boolean(pending) || checking} onBookingChange={setBookingVisit}
-          onBooked={markVisitScheduled} />}
+          onBooked={markVisitScheduled}
+          onOfferSlots={job.status === 'accepted' && !retryCommand ? () => begin('offer-slots') : undefined} />}
       {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
         event.preventDefault()
         if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })

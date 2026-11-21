@@ -3,7 +3,7 @@ import type { PointerEvent } from 'react'
 import { api, isFixtureMode } from './api/client'
 import { useActionFeedback } from './actionFeedback'
 import { slotLabel } from './caseDisplay'
-import { clearSelections, selectColumn } from './timetableSelection'
+import { clearSelections, hasAvailableSlot, selectColumn } from './timetableSelection'
 import type { ContractorTimetableWeek, TimetableSlot, TimetableWeek } from './types/domain'
 
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -28,21 +28,22 @@ function WeekNavigation({ week, monday, disabled, onChange }: {
   </div>
 }
 
-export function TenantTimetable({ unitId, residentId, location, disabled, onPendingChange }: {
+export function TenantTimetable({ unitId, residentId, location, disabled, onPendingChange, onReadyChange }: {
   unitId: string
   residentId: string
   location: string
   disabled: boolean
   onPendingChange: (pending: boolean) => void
+  onReadyChange: (ready: boolean) => void
 }) {
   const [week, setWeek] = useState(0)
-  const [calendar, setCalendar] = useState<TimetableWeek>()
+  const [calendars, setCalendars] = useState<TimetableWeek[]>()
+  const calendar = calendars?.[week]
   const [edits, setEdits] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const firstLoad = useRef(true)
   const drag = useRef<{
     pointerId: number
     anchor: TimetableSlot
@@ -51,30 +52,34 @@ export function TenantTimetable({ unitId, residentId, location, disabled, onPend
   } | null>(null)
   const suppressClick = useRef(false)
   const dirty = Object.keys(edits).length > 0
-  const hasSelection = calendar?.slots.some((slot) => !slot.past && !slot.booked && (edits[slot.start] ?? slot.available))
+  const hasSelection = calendar && hasAvailableSlot(calendar.slots, edits)
+  const hasSavedAvailability = calendars?.some((value) => hasAvailableSlot(value.slots)) ?? false
 
   useEffect(() => {
     onPendingChange(dirty || saving)
   }, [dirty, saving, onPendingChange])
 
   useEffect(() => {
+    onReadyChange(hasSavedAvailability)
+  }, [hasSavedAvailability, onReadyChange])
+
+  useEffect(() => () => onReadyChange(false), [onReadyChange])
+
+  useEffect(() => {
     if (isFixtureMode) return
     let active = true
-    api.getAvailability(unitId, residentId, week).then(
+    Promise.all(Array.from({ length: lastWeek + 1 }, (_, index) => api.getAvailability(unitId, residentId, index))).then(
       (value) => {
         if (!active) return
-        const showNextWeek = firstLoad.current && week === 0 && value.slots.every((slot) => slot.past)
-        firstLoad.current = false
-        if (showNextWeek) setWeek(1)
-        else setCalendar(value)
+        setWeek(value[0].slots.every((slot) => slot.past) ? 1 : 0)
+        setCalendars(value)
       },
       () => { if (active) setError('Availability could not be loaded. Try again.') },
     )
     return () => { active = false }
-  }, [unitId, residentId, week, revision])
+  }, [unitId, residentId, revision])
 
   function changeWeek(nextWeek: number) {
-    setCalendar(undefined)
     setError('')
     setNotice('')
     setWeek(nextWeek)
@@ -132,7 +137,8 @@ export function TenantTimetable({ unitId, residentId, location, disabled, onPend
     setNotice('')
     try {
       const selected = calendar.slots.filter((slot) => edits[slot.start] ?? slot.available)
-      setCalendar(await api.saveAvailability(unitId, residentId, calendar.week_start, selected.map((slot) => slot.start)))
+      const saved = await api.saveAvailability(unitId, residentId, calendar.week_start, selected.map((slot) => slot.start))
+      setCalendars((previous) => previous?.map((value) => value.week_start === saved.week_start ? saved : value))
       setEdits({})
       setNotice('Availability saved.')
     } catch (failure) {
@@ -143,9 +149,11 @@ export function TenantTimetable({ unitId, residentId, location, disabled, onPend
   }
 
   return <section className="review-timetable" aria-labelledby="review-availability">
-    <h3 id="review-availability">Availability <span className="muted">(optional)</span></h3>
+    <h3 id="review-availability">Availability</h3>
     {isFixtureMode ? <p className="muted">Connect to FastAPI to select repair times.</p> : <>
-      <p className="muted">Choose times that work for you and save them. Your assigned contractor can book one after you approve the request.</p>
+      <p className="muted">{hasSavedAvailability
+        ? 'Your assigned contractor can book one of your saved times after you approve the request.'
+        : 'Choose and save at least one available time to continue to sharing.'}</p>
       <WeekNavigation week={week} monday={calendar?.week_start} disabled={disabled || saving || dirty || !calendar} onChange={changeWeek} />
       {error && <p className="error" role="alert">{error}</p>}
       {!calendar && error && <button type="button" className="secondary" disabled={disabled} onClick={() => {
@@ -205,13 +213,14 @@ export function TenantTimetable({ unitId, residentId, location, disabled, onPend
   </section>
 }
 
-export function ContractorTimetable({ slug, jobId, location, disabled, onBookingChange, onBooked }: {
+export function ContractorTimetable({ slug, jobId, location, disabled, onBookingChange, onBooked, onOfferSlots }: {
   slug: string
   jobId: string
   location: string
   disabled: boolean
   onBookingChange: (booking: boolean) => void
   onBooked: () => void
+  onOfferSlots?: () => void
 }) {
   const notify = useActionFeedback()
   const [weeks, setWeeks] = useState<ContractorTimetableWeek[]>([])
@@ -224,6 +233,7 @@ export function ContractorTimetable({ slug, jobId, location, disabled, onBooking
   const [bookingError, setBookingError] = useState('')
   const selected = weeks.flatMap((week) => week.slots).find((slot) => slot.start === selection)
   const canBook = weeks.some((week) => week.can_book)
+  const hasSlots = weeks.some((week) => week.slots.length > 0)
 
   useEffect(() => {
     let active = true
@@ -277,7 +287,7 @@ export function ContractorTimetable({ slug, jobId, location, disabled, onBooking
       {refreshing ? <p className="muted" role="status">Loading saved times…</p>
         : loadError ? <p className="error" role="alert">{loadError}</p>
         : !canBook ? <p className="muted" role="status">Booking is unavailable for this repair right now.</p>
-        : weeks.every((week) => week.slots.length === 0) ? <p role="status">The tenant has no saved times in the next three calendar weeks.</p>
+        : !hasSlots ? <p role="status">There are no matching saved times in the next three calendar weeks.</p>
         : <fieldset disabled={booking || disabled}>
           <legend>Choose a visit time · {location} time</legend>
           <div className="visit-options">{weeks.flatMap((week) => weekdays.map((day, index) => {
@@ -294,8 +304,10 @@ export function ContractorTimetable({ slug, jobId, location, disabled, onBooking
         </fieldset>}
       {bookingError && <p className="error" role="alert">{bookingError}</p>}
       <div className="actions">
-        {canBook && weeks.some((week) => week.slots.length > 0) && <button type="button" onClick={() => void book()}
+        {canBook && hasSlots && <button type="button" onClick={() => void book()}
           disabled={!selected || booking || refreshing || disabled}>{booking ? 'Booking…' : 'Book visit'}</button>}
+        {!refreshing && canBook && !hasSlots && onOfferSlots &&
+          <button type="button" disabled={booking || disabled} onClick={onOfferSlots}>Offer times to tenant</button>}
         <button type="button" className="secondary" disabled={booking || refreshing || disabled} onClick={() => {
           setBookingError('')
           refresh()

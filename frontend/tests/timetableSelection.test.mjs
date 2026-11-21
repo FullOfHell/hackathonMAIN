@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { clearSelections, selectColumn } from '../src/timetableSelection.ts'
+import { clearSelections, hasAvailableSlot, selectColumn } from '../src/timetableSelection.ts'
+
+test('availability requires a usable saved slot and can count a draft selection separately', () => {
+  const slots = [
+    { start: 'past', available: true, past: true },
+    { start: 'booked', available: true, booked: true },
+    { start: 'open', available: false },
+  ]
+  assert.equal(hasAvailableSlot(slots), false)
+  assert.equal(hasAvailableSlot(slots, { open: true }), true)
+  assert.equal(hasAvailableSlot([...slots, { start: 'saved', available: true }]), true)
+})
 
 test('clearing selections only unmarks saved slots that are still editable', () => {
   const slots = [
