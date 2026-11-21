@@ -2,7 +2,7 @@
 
 This checklist turns the project plan into an execution order for the three-person team. Complete the P0 workflow before starting P1. P2 is optional and should not put the demo at risk.
 
-**Current demo status.** The typed report-to-invoice flow, structured intake, voice dictation, contractor management and portal bells are on `main` in the release checked at `55da0ba`. That release passed 176 backend tests, 10 frontend tests, the production build, and an isolated browser rehearsal across all three roles. Live checks on the shared n8n and speech provider credentials are still open. The required availability gate and the fallback for older reports were tested in Chrome as local changes and still need a release.
+**Current demo status.** The typed report-to-invoice flow, structured intake, voice dictation, contractor management and portal bells are on `main` in the release checked at `55da0ba`. That release passed 176 backend tests, 10 frontend tests, the production build, and an isolated browser rehearsal across all three roles. Live checks on the shared n8n and speech provider credentials are still open. The required availability gate and tenant-only time selection are on the feature branch and still need a release.
 
 ## Immediate setup
 
@@ -68,12 +68,13 @@ Do not begin P1 work until this milestone is reliable.
 ## P0 - Complete the repair loop
 
 - [x] Add backend endpoints for partner acceptance, rejection and slot offers.
-- [x] Add accept and reject controls, booking from saved tenant times, and a time-offer fallback when an accepted job has no matching saved slots.
+- [x] Add accept and reject controls and let the contractor book only a tenant’s saved time.
+- [x] Let the tenant update saved times while the appointment is pending, including when no time can be booked.
 - [x] Place the weekly availability table inside report review. Keep the scroll position when selecting a slot and keep the table scrollable on narrow screens.
-- [x] Require at least one saved future unbooked slot across the three displayed weeks in connected mode.
+- [x] Require at least one saved future unbooked slot across the three displayed weeks.
 - [x] Verify in Chrome that an empty or unsaved calendar blocks sharing, a saved slot in another week counts, and removing the last slot blocks sharing again.
 - [x] Validate resident identity and slot selection in the booking API.
-- [x] Let the tenant confirm a contractor-offered slot. Show the assigned contractor on the report confirmation and display the booked appointment with a date and local time range.
+- [x] Show the assigned contractor on the report confirmation and display the booked appointment with a date and local time range.
 - [x] Persist the selected appointment.
 - [x] Accept partner start and completion actions through the HeatFix API.
 - [x] Attach a synthetic repair report and invoice through the HeatFix API.
@@ -177,7 +178,7 @@ The shared-repair, high-value invoice, and partner-discovery backends are on `ma
 
 ## Final hand-in
 
-- [ ] Release the locally verified availability requirement and contractor offer fallback.
+- [ ] Release the required availability and tenant-only booking changes.
 - [ ] Confirm the pushed code matches the demonstrated version and judges can access it.
 - [ ] Tag the final demonstrated commit as `demo-final`.
 - [x] Document startup and the current repair walkthrough in the README.

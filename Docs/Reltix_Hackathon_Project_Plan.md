@@ -110,7 +110,7 @@ flowchart TD
     G --> H[Invoice and appointment appear on the original case and unit]
 ```
 
-A repair outcome appears only after FastAPI persists the corresponding booking, completion or invoice action. If an accepted repair has no matching saved times, the contractor can offer times for the resident to confirm.
+A repair outcome appears only after FastAPI persists the corresponding booking, completion or invoice action. If no saved time is available to book, the tenant can update availability in My cases and the contractor can refresh.
 
 ### Suggested state machine
 
@@ -319,9 +319,9 @@ Keep credentials in n8n or the backend environment. See the [workflow setup](../
 
 | View | Implemented workflow |
 |---|---|
-| Tenant Report | Describe, Summary and Approve. Enter text or review a dictated transcript, edit the issue and priority, save at least one future slot in connected mode, and approve sharing with the named contractor. Edit saved profile and home details in place. |
-| Tenant My cases | View status, local appointment time, milestones, repair result and downloadable invoice. Confirm a contractor-offered time when applicable. The bell shows contractor acceptance, decline and completion. |
-| Contractor inbox | Switch providers by name in the header. Review the approved job, accept or decline, book a mutually available saved time or offer times, then start work, complete the repair and attach the demo invoice. The bell shows the selected provider’s assigned jobs. |
+| Tenant Report | Describe, Summary and Approve. Enter text or review a dictated transcript, edit the issue and priority, save at least one future slot, and approve sharing with the named contractor. Edit saved profile and home details in place. |
+| Tenant My cases | View status, local appointment time, milestones, repair result and downloadable invoice. Update availability while awaiting booking. The bell shows contractor acceptance, decline and completion. |
+| Contractor inbox | Switch providers by name in the header. Review the approved job, accept or decline, book one of the tenant’s saved times, then start work, complete the repair and attach the demo invoice. The bell shows the selected provider’s assigned jobs. |
 | Manager | Register or deactivate contractors. Open any active contractor’s inbox and expand repair groups to see appointments, consent, outcomes and timelines. |
 | Notification outbox | Inspect persisted simulated delivery through the notifications API. Optional email and phone delivery can link to My cases. The dedicated booking link remains planned. |
 

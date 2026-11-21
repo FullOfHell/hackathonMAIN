@@ -57,7 +57,7 @@ npm.cmd run dev -- --port 5173 --strictPort
 ### Walk through a heating report
 
 1. In **Report**, enter “No heat since last night.” Open **Review your report**, check the summary and save at least one available hour under **Availability**. Continue to sharing and approve sending the shown fields to the named contractor.
-2. Open the assigned contractor's inbox and select **Accept**. Choose one of the tenant's saved times and select **Book visit**. If there are no matching saved times, select **Offer times to tenant**. The tenant can then select **Confirm appointment** in **My cases**.
+2. Open the assigned contractor's inbox and select **Accept**. Choose one of the tenant's saved times and select **Book visit**. If no saved time is available to book, the tenant can add more times from **My cases → View case details → Update my availability**. The contractor can then refresh availability.
 3. In **HeatFix inbox**, refresh the job list, select **Start repair**, then **Complete repair**. Enter a repair summary and select **Save completion**.
 4. Select **Submit demo invoice**, then **Confirm demo invoice**. Open **My cases** or **Manager** to check the same case and unit, read the repair outcome and download the synthetic invoice.
 
@@ -108,7 +108,7 @@ The project plan describes the full demo. The implemented booking and callback c
 
 The [frontend guide](frontend/README.md) covers all three views, including the themed report wizard, contractor inbox picker, appointment display, collapsible manager repair groups and contractor removal.
 
-The connected report requires a saved future slot in any of its three displayed weeks. Fixture mode provides a simulated report and job flow when FastAPI is unavailable.
+The report requires a saved future slot in any of its three displayed weeks. Fixture mode provides the same tenant-supplied calendar and contractor booking flow using in-memory data.
 
 ```bash
 cd frontend

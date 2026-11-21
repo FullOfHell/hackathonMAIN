@@ -182,7 +182,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [question, setQuestion] = useState<IntakeFollowUp | null>(null)
   const [availabilityPending, setAvailabilityPending] = useState(false)
   const [availabilityReady, setAvailabilityReady] = useState(false)
-  const canContinueToSharing = isFixtureMode || availabilityReady
+  const canContinueToSharing = availabilityReady
   const [reviewed, setReviewed] = useState<IntakeReview | null>(null)
   const [safety, setSafety] = useState(false)
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
@@ -581,16 +581,16 @@ function Inbox({ partnerSlug }: { partnerSlug: string }) {
 }
 
 const labels: Record<PartnerAction, string> = {
-  accept: 'Accept', reject: 'Reject', 'offer-slots': 'Offer slots',
+  accept: 'Accept', reject: 'Reject',
   start: 'Start repair', complete: 'Complete repair', invoice: 'Submit demo invoice',
 }
 const availableActions: Record<string, PartnerAction[]> = {
-  received: ['accept', 'reject'], accepted: ['offer-slots', 'reject'],
+  received: ['accept', 'reject'], accepted: ['reject'],
   scheduled: ['start'], in_progress: ['complete'],
   completed: ['invoice'],
 }
 const jobChecks: Record<string, {
-  action: 'accept' | 'reject' | 'offer-slots' | 'start'
+  action: 'accept' | 'reject' | 'start'
   label: string
   confirmation: string
   missing: string
@@ -603,10 +603,6 @@ const jobChecks: Record<string, {
   rejected: {
     action: 'reject', label: 'Check rejection', confirmation: 'Rejection confirmed on the resident case.',
     missing: 'Rejection is still missing from the resident case.', target: 'DECLINED',
-  },
-  slots_offered: {
-    action: 'offer-slots', label: 'Check slot delivery', confirmation: 'The offered slots reached the resident case.',
-    missing: 'The offered slots have not reached the resident case.', target: 'SLOTS_OFFERED',
   },
   in_progress: {
     action: 'start', label: 'Check repair start', confirmation: 'Repair start confirmed on the resident case.',
@@ -635,7 +631,6 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   const pendingAcceptance = job.pending_callback?.type === 'accepted'
   const retryCommand = retry ?? (pendingAcceptance ? { action: 'accept' as const } : null)
   const actions = retryCommand ? [retryCommand.action] : (availableActions[job.status] ?? [])
-    .filter((action) => isFixtureMode || action !== 'offer-slots')
   const check = jobChecks[job.status]
   const invoice = syntheticInvoice(job.id)
   const markVisitScheduled = useCallback(() => {
@@ -661,7 +656,7 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
       if (acknowledged?.action === action) setConfirmation(acknowledged.confirmation)
       notify('success', {
         accept: 'Repair assignment accepted.', reject: 'Repair assignment declined.',
-        'offer-slots': 'Appointment times sent to the resident.', start: 'Repair start recorded.',
+        start: 'Repair start recorded.',
         complete: 'Completion report saved.', invoice: 'Invoice submitted.',
       }[action])
     } catch (failure) {
@@ -720,14 +715,13 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
       {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
-      {!isFixtureMode && job.status === 'received' && <p className="muted">Accept the repair to choose a time from the tenant’s saved availability.</p>}
+      {job.status === 'received' && <p className="muted">Accept the repair to choose a time from the tenant’s saved availability.</p>}
       {pendingAcceptance && <p className="muted">Retry acceptance to unlock the tenant’s saved times.</p>}
-      {!isFixtureMode && !pendingAcceptance &&
+      {!pendingAcceptance &&
         ['accepted', 'slots_offered', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
         <ContractorTimetable slug={partnerSlug} jobId={job.id} location={repairTimeLocation(property.address)}
           disabled={Boolean(pending) || checking} onBookingChange={setBookingVisit}
-          onBooked={markVisitScheduled}
-          onOfferSlots={job.status === 'accepted' && !retryCommand ? () => begin('offer-slots') : undefined} />}
+          onBooked={markVisitScheduled} />}
       {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
         event.preventDefault()
         if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })

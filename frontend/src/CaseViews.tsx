@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { api, invoiceUrl, isFixtureMode } from './api/client'
+import { api, invoiceUrl } from './api/client'
+import { TenantTimetable } from './Timetable'
 import { useActionFeedback } from './actionFeedback'
 import { caseStatusLabel, formatTime, slotLabel, timelineEventLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
@@ -83,6 +84,7 @@ export function CaseProgress({ initial, active, location }: {
   const refreshing = refresh > 0 && refresh !== refreshResult?.revision
   const [selection, setSelection] = useState('')
   const [lockedSlot, setLockedSlot] = useState('')
+  const [editingAvailability, setEditingAvailability] = useState(false)
   const [bookingError, setBookingError] = useState('')
   const [booking, setBooking] = useState(false)
   const submitting = useRef(false)
@@ -163,8 +165,15 @@ export function CaseProgress({ initial, active, location }: {
       </form> : current.status === 'DECLINED' ? <p role="status"><strong>Declined by contractor</strong>. No appointment was booked.</p>
         : current.status === 'NEEDS_HUMAN_REVIEW' || current.status === 'FAILED' || current.status === 'CANCELLED'
           ? <p role="status">{caseStatusLabel(current.status)}. No appointment was confirmed.</p>
-          : isFixtureMode ? <p role="status">Waiting for your contractor to offer appointment times.</p>
-            : <p role="status">Your contractor can book one of the times you saved when reviewing your report.</p>}
+          : <p role="status">Your contractor can book one of the times you saved.</p>}
+      {!current.appointment && ['PARTNER_REQUESTED', 'SLOTS_OFFERED'].includes(current.status) && <>
+        <button type="button" className="secondary" aria-expanded={editingAvailability}
+          onClick={() => setEditingAvailability((open) => !open)}>
+          {editingAvailability ? 'Hide availability' : 'Update my availability'}
+        </button>
+        {editingAvailability && <TenantTimetable unitId={current.unit_id} residentId={current.resident_id}
+          location={location ?? 'Germany'} />}
+      </>}
       <RepairOutcome item={current} />
       <CaseTimeline caseId={caseId} revision={timelineRevision} />
     </section>

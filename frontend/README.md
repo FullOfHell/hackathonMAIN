@@ -11,18 +11,18 @@ npm ci
 VITE_API_BASE_URL=http://localhost:8000 npm run dev -- --port 5173 --strictPort
 ```
 
-Set `VITE_API_BASE_URL` in `.env.local` to keep the API address between sessions. With no API URL, fixture mode offers a simulated report and job flow. The connected calendar, provider registration and voice transcription require FastAPI.
+Set `VITE_API_BASE_URL` in `.env.local` to keep the API address between sessions. With no API URL, fixture mode offers a simulated report and job flow. The calendar and booking are simulated in fixture mode. Provider registration and voice transcription require FastAPI.
 
 ## Views
 
 | Route | What to test |
 |---|---|
 | `#report` | Type or dictate a report, review symptoms and priority, save a future calendar slot, and approve the fields for the assigned contractor. The progress bar follows Describe, Summary and Approve. Address, unit, heating type and contact details are editable in **Your home**. |
-| `#cases` | Expand a report to see status, confirmed appointment, repair timeline and invoice. Confirm an offered time if the contractor sent options. |
-| `#inbox` or `#inbox/<slug>` | Choose the contractor in the header. Accept or reject a job, book a saved time or offer options, start and complete the repair, then confirm a demo invoice. |
+| `#cases` | Expand a report to see status, confirmed appointment, repair timeline and invoice. Update your availability while the repair is waiting for an appointment. |
+| `#inbox` or `#inbox/<slug>` | Choose the contractor in the header. Accept or reject a job, book one of the tenant’s saved times, start and complete the repair, then confirm a demo invoice. |
 | `#manager` | Add contractors by name, city and inbox slug. **Delete** deactivates the contractor after confirmation and hides its repair group from Manager. Existing case history is retained. **Open inbox** opens the selected provider’s jobs. |
 
-The tenant bell shows acceptance, decline and completion. Each contractor bell shows that provider’s relevant new jobs. Clicking a message marks it read while the panel stays open. Availability is saved by week. At least one future unbooked slot in any of the three displayed weeks is required to continue in connected mode.
+The tenant bell shows acceptance, decline and completion. Each contractor bell shows that provider’s relevant new jobs. Clicking a message marks it read while the panel stays open. Availability is saved by week. At least one future unbooked slot in any of the three displayed weeks is required to continue. If no saved times are available to book, the tenant can add more through My cases.
 
 Report draft saves, profile saves, transcription, contractor registration, visit booking, completion and invoice submission run immediately. **Approve and send** offers **Undo** and **Send now** for the final handoff.
 
