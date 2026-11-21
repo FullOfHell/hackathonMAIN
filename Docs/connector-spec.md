@@ -106,6 +106,12 @@ The demo loads known repair address coordinates from `repair_locations` in `back
 
 When no eligible contractor remains, the portal shows **No contractors available** and keeps the report. **Check contractor availability** reopens the sharing preview for the same report if a contractor becomes available. Changes to the recipient require fresh approval before any data is sent.
 
+### Tenant timetable for simulated delivery jobs
+
+The portal saves a tenant's selected one-hour slots through `GET` and `PUT /api/units/{unit_id}/residents/{resident_id}/availability`. Reads take a week offset from 0 to 2 and the synthetic `acting_resident_id`. Writes send the actor, the displayed Monday as `week_start`, and the selected slot starts as `available_starts`. Starts are returned as UTC timestamps. The timetable uses Monday to Friday, 09:00 to 17:00 Aachen time.
+
+For a local assigned job, `GET /partners/{slug}/connector/jobs/{job_id}/tenant-availability?week=0` returns the available times after acceptance, plus the appointment if booked. `POST` to the same path with `/book` appended and a returned `start` to confirm a visit. FastAPI checks the assignment, sharing approval and slot again at booking. The case and simulated job reach scheduled status in one SQLite transaction. Repeating the same booking returns the saved appointment. The existing connector offer and confirmation endpoints still serve legacy and external workflows.
+
 ## Adding an internet move-in offer
 
 The registry also discovers FibreNet's simulated move-in offer. The offer lifecycle and service-contract write-back below are proposed. They are distinct from a support visit using the delivery contract above.

@@ -46,6 +46,32 @@ input { accent-color: #942f1d; }
 .home-details dd:last-child { margin-bottom: 0; }
 .property-details { border-top: 1px solid #ecdcd0; padding-top: 1rem; margin-top: 1rem; }
 .edit-profile { margin-top: .9rem; }
+.availability-link { margin: 1rem 0 0; }
+.availability-link a, .case-progress a { color: #752d1d; }
+.timetable-navigation { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.timetable-navigation span { font-weight: 650; }
+.timetable-scroll { overflow-x: auto; padding: .25rem; }
+.timetable-grid { width: 100%; min-width: 41rem; border-collapse: separate; border-spacing: .25rem; user-select: none; }
+.timetable-grid caption { text-align: left; color: #6c554a; font-size: .9rem; padding-bottom: .25rem; }
+.timetable-grid th { text-align: left; padding: .35rem .5rem; }
+.timetable-grid th span { display: block; font-weight: 400; font-size: .85rem; color: #6c554a; }
+.timetable-grid td { width: 18%; padding: 0; background: #faf3ec; border: 1px solid #ecdcd0; border-radius: .5rem; font-size: .82rem; }
+.timetable-grid td > strong { display: block; padding: .55rem; }
+.timetable-grid .slot-toggle { display: block; width: 100%; min-height: 2.5rem; padding: .4rem; border: 0; border-radius: .45rem; color: #693323; background: transparent; font: inherit; }
+.timetable-grid .slot-toggle:hover:not([aria-pressed="true"]):not(:disabled) { background: #f4dbca; }
+.timetable-grid td.available, .timetable-grid .slot-toggle[aria-pressed="true"], .timetable-grid .slot-toggle:active:not(:disabled) {
+  color: #fff8ef;
+  background: #942f1d;
+  border-color: #942f1d;
+}
+.timetable-grid td.booked { color: #244738; background: #e6f1e9; border-color: #a4c3b0; }
+.timetable-grid td.elapsed { background: #f2eeea; }
+.timetable-notice { margin: .75rem 0 0; }
+.job-timetable { border-top: 1px solid #ecdcd0; margin-top: 1rem; padding-top: .85rem; }
+.job-timetable h4 { margin: 0; }
+.visit-options { display: flex; flex-wrap: wrap; gap: .65rem; }
+.visit-options > div { background: #faf3ec; border: 1px solid #ecdcd0; border-radius: .6rem; padding: .55rem .7rem; }
+.visit-options label { display: flex; align-items: center; gap: .35rem; margin-top: .45rem; cursor: pointer; }
 .profile-editor fieldset { display: grid; gap: .55rem; margin: .8rem 0; }
 .profile-editor label { display: grid; gap: .2rem; font-size: .9rem; font-weight: 600; }
 .profile-editor input, .profile-editor select {

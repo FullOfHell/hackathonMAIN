@@ -250,6 +250,26 @@ export interface PartnerInboxJob {
   payload: PartnerJob
 }
 
+export interface TimetableSlot {
+  start: string
+  end: string
+  day: number
+  hour: number
+  available: boolean
+  booked: boolean
+  past: boolean
+}
+
+export interface TimetableWeek {
+  week_start: string
+  slots: TimetableSlot[]
+}
+
+export interface ContractorTimetableWeek extends TimetableWeek {
+  can_book: boolean
+  appointment: MaintenanceCase['appointment']
+}
+
 export type PartnerAction = 'accept' | 'reject' | 'offer-slots' | 'start' | 'complete' | 'invoice'
 
 export type PartnerCommand =

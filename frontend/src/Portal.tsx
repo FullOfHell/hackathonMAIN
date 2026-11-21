@@ -5,6 +5,7 @@ import { VoiceDraft } from './VoiceDraft'
 import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
 import { ManagerContractors } from './ManagerContractors'
+import { ContractorTimetable, TenantTimetable } from './Timetable'
 import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
 import { caseStatusLabel, formatTime, noContractorsLabel, slotLabel, statusLabel } from './caseDisplay'
@@ -44,13 +45,15 @@ const loadUnitCases = () => api.listUnitCases(unitId)
 const defaultInbox = { slug: defaultContractorSlug, name: 'HeatFix Aachen' }
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
+  '#availability': 'Your availability',
   '#manager': 'Property manager',
 }
 
 function App() {
   const [hash, setHash] = useState(() => location.hash)
   const partnerSlug = contractorInboxSlug(hash)
-  const view = partnerSlug ? '#inbox' : (hash === '#cases' || hash === '#manager' ? hash : '#report')
+  const view = partnerSlug ? '#inbox'
+    : (hash === '#cases' || hash === '#availability' || hash === '#manager' ? hash : '#report')
   const [contractors, setContractors] = useState<Contractor[]>()
   const [contractorLoadFailed, setContractorLoadFailed] = useState(false)
   const inboxes = contractors ?? [defaultInbox]
@@ -81,6 +84,7 @@ function App() {
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
               <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
+              <a href="#availability" aria-current={view === '#availability' ? 'page' : undefined}>Availability</a>
               <span className="contractor-inbox-picker">
                 <span aria-hidden="true">{inbox?.name ?? 'Contractors'}</span>
                 <select className="contractor-inbox-select" aria-label="Contractor inbox" title="Choose a contractor inbox"
@@ -100,6 +104,7 @@ function App() {
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
         {view === '#cases' && <ResidentCases />}
+        {view === '#availability' && <ResidentAvailability />}
         {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
         {view === '#manager' && <Manager contractors={contractors} loadError={contractorLoadFailed}
           onSaved={(contractor) => setContractors((list = []) =>
@@ -120,6 +125,17 @@ function ResidentPortal({ active }: { active: boolean }) {
   if (!home.data) return <section className="panel"><p role="status">Loading your home details…</p></section>
   if (!home.data.residents.length) return <section className="panel"><p role="alert">No resident is configured for this unit.</p></section>
   return <Report home={home.data} active={active} />
+}
+
+function ResidentAvailability() {
+  const home = useLoad(loadHome)
+  const resident = home.data?.residents[0]
+  if (resident) return <TenantTimetable unitId={unitId} residentId={resident.id} />
+  return <section className="panel">
+    {home.failed ? <><p role="alert">Your resident details could not be loaded.</p>
+      <button className="secondary" onClick={home.reload}>Try again</button></>
+      : <p role="status">{home.data ? 'No resident is configured for this unit.' : 'Loading your home details…'}</p>}
+  </section>
 }
 
 function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Resident) {
@@ -499,6 +515,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         <h2>Your home</h2>
         <ResidentProfileEditor resident={resident} homeDetails={residentHomeDetails(home, resident)} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
           onSave={saveProfile} />
+        {!isFixtureMode && <p className="availability-link"><a href="#availability">Set your repair availability</a></p>}
         {awaitingConsentReceipt && !busy && <p className="muted">Retry the handoff to confirm consent before editing your details.</p>}
       </aside>
     </div>
@@ -573,7 +590,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   const [confirmation, setConfirmation] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
-  const actions = retry ? [retry.action] : availableActions[job.status] ?? []
+  const actions = retry ? [retry.action] : (availableActions[job.status] ?? [])
+    .filter((action) => isFixtureMode || action !== 'offer-slots')
   const check = jobChecks[job.status]
   const invoice = syntheticInvoice(job.id)
 
@@ -642,6 +660,9 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
       {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
+      {!isFixtureMode && ['accepted', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
+        <ContractorTimetable slug={partnerSlug} jobId={job.id}
+          onBooked={() => setJob((item) => ({ ...item, status: 'scheduled' }))} />}
       {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
         event.preventDefault()
         if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })

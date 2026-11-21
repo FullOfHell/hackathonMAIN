@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS appointments (
   case_id TEXT PRIMARY KEY REFERENCES cases(id), slot_id TEXT NOT NULL, booked_at TEXT NOT NULL,
   FOREIGN KEY (case_id, slot_id) REFERENCES appointment_slots(case_id, slot_id)
 );
+CREATE TABLE IF NOT EXISTS tenant_availability (
+  resident_id TEXT NOT NULL REFERENCES residents(id), start TEXT NOT NULL,
+  PRIMARY KEY (resident_id, start)
+);
 -- Simulated partner-side storage (stands in for the contractor's own system).
 CREATE TABLE IF NOT EXISTS partner_jobs (
   id TEXT PRIMARY KEY, partner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
