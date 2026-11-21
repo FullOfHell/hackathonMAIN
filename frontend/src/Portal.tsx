@@ -4,15 +4,17 @@ import { api, isFixtureMode, residentHomeDetails } from './api/client'
 import { VoiceDraft } from './VoiceDraft'
 import { ResidentProfileEditor } from './ResidentProfileEditor'
 import { NotificationBell } from './NotificationBell'
+import { ContractorPicker } from './ContractorPicker'
+import { FieldDropdown } from './PortalDropdown'
 import { ManagerContractors } from './ManagerContractors'
 import { ContractorTimetable, TenantTimetable } from './Timetable'
 import { ActionFeedback, feedbackDuration, useActionFeedback, useBeforeSend } from './actionFeedback'
 import { SendWindow } from './SendWindow'
 import type { ActionResult } from './actionFeedback'
-import { contractorInboxHref, contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
+import { contractorInboxSlug, defaultContractorSlug } from './repairNotifications'
 import { CaseProgress, CaseTimeline, RepairOutcome } from './CaseViews'
-import { caseStatusLabel, formatTime, noContractorsLabel, slotLabel, statusLabel } from './caseDisplay'
-import { availabilityPrefix, intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
+import { caseStatusLabel, formatTime, noContractorsLabel, repairTimeLocation, slotLabel, statusLabel } from './caseDisplay'
+import { intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
   Contractor, CreateCaseRequest, IntakeRequest, MaintenanceCase, ManagerRepair, PartnerAction, PartnerCommand,
@@ -21,7 +23,7 @@ import type {
 import './Portal.css'
 
 const shortcuts = ['No heat at all', 'Radiators are lukewarm', 'Some radiators are cold']
-const steps = ['Describe', 'Review', 'Approve']
+const steps = ['Describe', 'Summary', 'Approve']
 
 function useLoad<T>(load: () => Promise<T>, label: string) {
   const notify = useActionFeedback()
@@ -69,7 +71,6 @@ const loadResidentCases = async () => {
 const defaultInbox = { slug: defaultContractorSlug, name: 'HeatFix Aachen' }
 const views = {
   '#report': 'Report broken heating', '#cases': 'My cases',
-  '#availability': 'Your availability',
   '#manager': 'Property manager',
 }
 
@@ -84,7 +85,7 @@ function App() {
   const [hash, setHash] = useState(() => location.hash)
   const partnerSlug = contractorInboxSlug(hash)
   const view = partnerSlug ? '#inbox'
-    : (hash === '#cases' || hash === '#availability' || hash === '#manager' ? hash : '#report')
+    : (hash === '#cases' || hash === '#manager' ? hash : '#report')
   const [contractors, setContractors] = useState<Contractor[]>()
   const [contractorLoadFailed, setContractorLoadFailed] = useState(false)
   const inboxes = contractors ?? [defaultInbox]
@@ -115,33 +116,25 @@ function App() {
             <div className="nav-links">
               <a href="#report" aria-current={view === '#report' ? 'page' : undefined}>Report</a>
               <a href="#cases" aria-current={view === '#cases' ? 'page' : undefined}>My cases</a>
-              <a href="#availability" aria-current={view === '#availability' ? 'page' : undefined}>Availability</a>
-              <span className="contractor-inbox-picker">
-                <span aria-hidden="true">{inbox?.name ?? 'Contractors'}</span>
-                <select className="contractor-inbox-select" aria-label="Contractor inbox" title="Choose a contractor inbox"
-                  value={inbox?.slug ?? ''}
-                  onChange={(event) => { location.hash = contractorInboxHref(event.target.value) }}>
-                  <option value="" disabled>Contractor inbox</option>
-                  {inboxes.map(({ slug, name }) => <option key={slug} value={slug}>{name}</option>)}
-                </select>
-              </span>
+              <ContractorPicker inboxes={inboxes} selectedSlug={partnerSlug} />
               <a href="#manager" aria-current={view === '#manager' ? 'page' : undefined}>Manager</a>
             </div>
             {view !== '#manager' && <NotificationBell key={partnerSlug ? 'contractor:' + partnerSlug : 'resident'} partnerSlug={partnerSlug} unitId={unitId} />}
           </nav>
-          <h1>{view === '#inbox' ? inboxTitle : views[view]}</h1>
+        </div>
+        <div className="masthead-hero">
+          <div className="masthead-inner">
+            <h1>{view === '#inbox' ? inboxTitle : views[view]}</h1>
+          </div>
         </div>
       </header>
       <main>
         <div hidden={view !== '#report'}><ResidentPortal active={view === '#report'} /></div>
         {view === '#cases' && <ResidentCases />}
-        {view === '#availability' && <ResidentAvailability />}
         {partnerSlug && <Inbox key={partnerSlug} partnerSlug={partnerSlug} />}
         {view === '#manager' && <Manager contractors={contractors} loadError={contractorLoadFailed}
-          onSaved={(contractor) => setContractors((list = []) =>
-            list.some((entry) => entry.slug === contractor.slug)
-              ? list.map((entry) => entry.slug === contractor.slug ? contractor : entry)
-              : [...list, contractor])} />}
+          onSaved={(contractor) => setContractors((list = []) => [...list, contractor])}
+          onRemoved={(slug) => setContractors((list = []) => list.filter((entry) => entry.slug !== slug))} />}
       </main>
       <div className="action-feedback" data-result={notice?.result}>
         <span role="status" aria-atomic="true">{notice?.message}</span>
@@ -162,25 +155,13 @@ function ResidentPortal({ active }: { active: boolean }) {
   return <Report home={home.data} active={active} />
 }
 
-function ResidentAvailability() {
-  const home = useLoad(loadHome, 'Home details')
-  const resident = home.data?.residents[0]
-  if (resident) return <TenantTimetable unitId={unitId} residentId={resident.id} />
-  return <section className="panel">
-    {home.failed ? <><p role="alert">Your resident details could not be loaded.</p>
-      <button className="secondary" onClick={home.reload}>Try again</button></>
-      : <p role="status">{home.data ? 'No resident is configured for this unit.' : 'Loading your home details…'}</p>}
-  </section>
-}
-
 function sharingFields(home: UnitContext, current: MaintenanceCase, resident: Resident) {
   const details = residentHomeDetails(home, resident)
   const values: Record<string, { label: string; value: string }> = {
     address: { label: 'Address', value: details.address },
     unit: { label: 'Unit', value: details.unit },
     issue: { label: 'Issue summary', value: [current.description,
-      ...current.symptoms, ...current.availability_preferences,
-      'Priority: ' + current.urgency].join('\n') },
+      ...current.symptoms, ...current.availability_preferences].join('\n') },
     name: { label: 'Your name', value: resident.name },
     contact: { label: 'Email and phone', value: [resident.email, resident.phone].filter(Boolean).join(' · ') },
     heating_type: { label: 'Heating type', value: details.heating },
@@ -199,7 +180,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
   const [issue, setIssue] = useState('')
   const [hotWater, setHotWater] = useState<boolean | null>(null)
   const [question, setQuestion] = useState<IntakeFollowUp | null>(null)
-  const [followUp, setFollowUp] = useState('')
+  const [availabilityPending, setAvailabilityPending] = useState(false)
   const [reviewed, setReviewed] = useState<IntakeReview | null>(null)
   const [safety, setSafety] = useState(false)
   const [current, setCurrent] = useState<MaintenanceCase | null>(null)
@@ -296,7 +277,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         setSafety(true)
         return
       }
-      const next = nextIntakeFollowUp(result, resolvedQuestions.current, input.report.length)
+      const next = nextIntakeFollowUp(result, resolvedQuestions.current)
       if (next) {
         setQuestion(next)
         return
@@ -310,24 +291,17 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     }
   }
 
-  function answerQuestion(answer: string | boolean | null) {
+  function answerQuestion(answer: boolean | null) {
     if (!question || submitting.current) return
     resolvedQuestions.current.add(question)
-    const report = typeof answer === 'string' ? `${issue.trim()}\n${availabilityPrefix}${answer.trim()}` : issue.trim()
-    const hotWaterAnswer = typeof answer === 'boolean' ? answer : hotWater
-    setIssue(report)
-    setHotWater(hotWaterAnswer)
-    setFollowUp('')
-    void inspectDraft({ report, hot_water_affected: hotWaterAnswer })
+    setHotWater(answer)
+    void inspectDraft({ report: issue.trim(), hot_water_affected: answer })
   }
 
   function review(event: FormEvent) {
     event.preventDefault()
-    if (safety) return
-    if (question && followUp.trim()) answerQuestion(followUp)
-    else if (!question) void inspectDraft({
-      report: issue.trim(), hot_water_affected: isFixtureMode && hotWaterReported ? null : hotWater,
-    })
+    if (safety || question) return
+    void inspectDraft({ report: issue.trim(), hot_water_affected: isFixtureMode && hotWaterReported ? null : hotWater })
   }
 
   async function save(event: FormEvent) {
@@ -336,7 +310,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       notify('error', message)
     }
     event.preventDefault()
-    if (submitting.current || (step === 2 && profileSave.current)) return
+    if (submitting.current || (step === 1 && availabilityPending) || (step === 2 && profileSave.current)) return
     if (step === 1 && reviewed && possibleGasLeak([reviewed.description, reviewed.symptoms, reviewed.availability].join('\n'))) {
       setSafety(true)
       return
@@ -350,7 +324,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           unit_id: home.unit_id, resident_id: resident.id, issue_type: 'heating_repair',
           description: reviewed.description.trim(), source_channel: 'portal_chat',
           symptoms: reviewSymptoms(reviewed.symptoms), availability_preferences: reviewEntries(reviewed.availability),
-          urgency: reviewed.urgency || 'normal',
+          urgency: reviewed.urgency,
         }
         setCurrent(current ? await api.updateCaseReport(current.id, body) : await api.createCase(body))
         notify('success', 'Your heating report was saved.')
@@ -431,7 +405,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     }}>Back to summary</button>
 
   function reset() {
-    setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setFollowUp(''); setSafety(false)
+    setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setAvailabilityPending(false); setSafety(false)
     resolvedQuestions.current.clear()
     setCurrent(null); setSelected(['heating_type'])
     setApproved(false); setDispatch(null); setError(''); setStep(0)
@@ -447,25 +421,21 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     <div className="report-layout">
       <section className="panel report-panel" aria-label="Heating report">
         {!sent && <ol className="steps" aria-label="Report progress">
-          {steps.map((label, index) => <li key={label} aria-current={step === index ? 'step' : undefined}>{label}</li>)}
+          {steps.map((label, index) => (
+            <li key={label} aria-current={step === index ? 'step' : undefined} data-reached={index <= step}>
+              {index + 1}. {label}
+            </li>
+          ))}
         </ol>}
         {step === 0 && <form onSubmit={review}>
-          {question === 'hot_water_affected' ? <fieldset disabled={busy}>
+          {question ? <fieldset disabled={busy}>
             <legend>{intakeQuestions[question]}</legend>
             <div className="actions">
               <button type="button" onClick={() => answerQuestion(true)}>Yes</button>
               <button type="button" onClick={() => answerQuestion(false)}>No</button>
               <button type="button" className="secondary" onClick={() => answerQuestion(null)}>Skip</button>
             </div>
-          </fieldset> : question ? <>
-            <label htmlFor="intake-follow-up"><strong>{intakeQuestions[question]}</strong></label>
-            <textarea id="intake-follow-up" value={followUp} onChange={(event) => setFollowUp(event.target.value)} rows={3}
-              maxLength={reportLimit - issue.trim().length - 1 - availabilityPrefix.length} disabled={busy} />
-            <div className="actions">
-              <button disabled={busy || !followUp.trim()}>Continue</button>
-              <button type="button" className="secondary" onClick={() => answerQuestion(null)}>Skip</button>
-            </div>
-          </> : <>
+          </fieldset> : <>
             <label htmlFor="report"><strong>What’s happening with your heating?</strong></label>
             <textarea id="report" value={issue} onChange={(event) => { setIssue(event.target.value); setSafety(false) }}
               placeholder="For example, my radiators have been cold since last night." rows={4} maxLength={reportLimit} disabled={busy} />
@@ -487,12 +457,12 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
                     onChange={() => setHotWater(value)} /> {label}</label>)}
               </div>
             </fieldset>}
-            <div className="actions"><button disabled={busy || safety || issue.trim().length < 3}>
+            <div className="actions report-next"><button disabled={busy || safety || issue.trim().length < 3}>
               {busy ? 'Checking report…' : 'Review summary'}
             </button></div>
           </>}
           {question && <div className="actions"><button type="button" className="secondary" onClick={() => {
-            setQuestion(null); setFollowUp('')
+            setQuestion(null)
           }}>Edit report</button></div>}
           {safety && <p className="error" role="alert">{safetyMessage}</p>}
         </form>}
@@ -504,20 +474,22 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           <label htmlFor="symptoms">Symptoms (one per line)</label>
           <textarea id="symptoms" value={reviewed.symptoms} rows={3}
             onChange={(event) => { setReviewed({ ...reviewed, symptoms: event.target.value }); setSafety(false) }} disabled={busy} />
-          <label htmlFor="availability">Availability (optional, one preference per line)</label>
-          <textarea id="availability" value={reviewed.availability} rows={2}
-            onChange={(event) => { setReviewed({ ...reviewed, availability: event.target.value }); setSafety(false) }} disabled={busy} />
-          <label htmlFor="urgency">Priority </label>
-          <select id="urgency" value={reviewed.urgency} disabled={busy} onChange={(event) =>
-            setReviewed({ ...reviewed, urgency: event.target.value as IntakeReview['urgency'] })}>
-            <option value="">Normal (default)</option><option value="low">Low</option>
-            <option value="normal">Normal</option><option value="high">High</option>
-          </select>
+          <FieldDropdown<IntakeReview['urgency']> label="Priority" value={reviewed.urgency} disabled={busy}
+            options={[{ value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' },
+              { value: 'high', label: 'High' }]}
+            onChange={(urgency) => setReviewed({ ...reviewed, urgency })} />
+          <TenantTimetable unitId={home.unit_id} residentId={resident.id}
+            location={repairTimeLocation(residentHomeDetails(home, resident).address)}
+            disabled={busy} onPendingChange={setAvailabilityPending} />
           {safety && <p className="error" role="alert">{safetyMessage}</p>}
           {error && <p className="error" role="alert">{error}</p>}
+          {availabilityPending && <p className="muted availability-reminder" role="status">Save or discard your availability changes to continue.</p>}
           <div className="actions">
-            <button type="button" className="secondary" disabled={busy} onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back to description</button>
-            <button disabled={busy || safety || reviewed.description.trim().length < 3}>{busy ? 'Saving…' : 'Continue to sharing'}</button>
+            <button type="button" className="secondary" disabled={busy || availabilityPending}
+              onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back to description</button>
+            <button disabled={busy || availabilityPending || safety || reviewed.description.trim().length < 3}>
+              {busy ? 'Saving…' : 'Continue to sharing'}
+            </button>
           </div>
         </form>}
         {step === 2 && current && !sent && (request ? <form onSubmit={save}>
@@ -527,6 +499,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
             <legend>Required details</legend>
             {fields.filter((field) => field.required).map((field) =>
               <div className="field-row" key={field.key}><strong>{field.label || field.key}</strong><span>{field.value || 'Unavailable'}</span></div>)}
+            <div className="field-row"><strong>Priority</strong><span>{caseStatusLabel(current.urgency)}</span></div>
           </fieldset>
           {fields.some((field) => !field.required) && <fieldset disabled={busy || profileSaving || Boolean(dispatch)}>
             <legend>Optional details</legend>
@@ -566,18 +539,20 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         </div>)}
         {sent && current && <div>
           <h2 ref={stepHeading} tabIndex={-1}>{isFixtureMode ? 'Demo job created' : 'Your contractor has your report'}</h2>
+          {(current.contractor_name || dispatch?.request.partner.name) &&
+            <p><strong>Contractor</strong> · {current.contractor_name || dispatch?.request.partner.name}</p>}
           <p>Case {current.id} · Job {current.partner_job_id}</p>
-          <CaseProgress key={current.id} initial={current} active={active} />
+          <CaseProgress key={current.id} initial={current} active={active}
+            location={repairTimeLocation(dispatch?.fields.find((field) => field.key === 'address')?.value)} />
           <div className="actions">
             <button className="secondary" disabled={busy} onClick={reset}>Report another issue</button>
           </div>
         </div>}
       </section>
-      <aside className="panel">
+      <aside className="panel home-panel">
         <h2>Your home</h2>
         <ResidentProfileEditor resident={resident} homeDetails={residentHomeDetails(home, resident)} saving={profileSaving} blocked={awaitingConsentReceipt || (step === 2 && busy)}
           onSave={saveProfile} />
-        {!isFixtureMode && <p className="availability-link"><a href="#availability">Set your repair availability</a></p>}
         {awaitingConsentReceipt && !busy && <p className="muted">Retry the handoff to confirm consent before editing your details.</p>}
       </aside>
     </div>
@@ -651,13 +626,21 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
   const [checking, setChecking] = useState(false)
+  const [bookingVisit, setBookingVisit] = useState(false)
   const [confirmation, setConfirmation] = useState('')
   const submitting = useRef(false)
   const { property, issue, resident } = job.payload
-  const actions = retry ? [retry.action] : (availableActions[job.status] ?? [])
+  const pendingAcceptance = job.pending_callback?.type === 'accepted'
+  const retryCommand = retry ?? (pendingAcceptance ? { action: 'accept' as const } : null)
+  const actions = retryCommand ? [retryCommand.action] : (availableActions[job.status] ?? [])
     .filter((action) => isFixtureMode || action !== 'offer-slots')
   const check = jobChecks[job.status]
   const invoice = syntheticInvoice(job.id)
+  const markVisitScheduled = useCallback(() => {
+    setConfirmation('')
+    setJob((item) => item.status === 'accepted' || item.status === 'slots_offered'
+      ? { ...item, status: 'scheduled' } : item)
+  }, [])
 
   async function act(command: PartnerCommand) {
     if (submitting.current) return
@@ -718,7 +701,7 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
   }
 
   function begin(action: PartnerAction) {
-    if (retry) void act(retry)
+    if (retryCommand) void act(retryCommand)
     else if (action === 'complete' || action === 'invoice') setEditing(action)
     else void act({ action })
   }
@@ -729,14 +712,19 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
         <span className="status" data-status={job.status.toLowerCase()} role="status">{caseStatusLabel(job.status)}</span></div>
       <p>{property.address} · Unit {property.unit}</p>
       <p className="issue-copy">{issue.description}</p>
+      <p><strong>Priority</strong> · {caseStatusLabel(issue.priority)}</p>
       {property.heating_type && <p>Heating · {property.heating_type}</p>}
       {resident.name && <p>Resident · {resident.name}</p>}
       {resident.contact && <p>Contact · {[resident.contact.email, resident.contact.phone].filter(Boolean).join(' · ')}</p>}
       <p className="muted">{job.id} · {job.request_id} · <time dateTime={job.received_at}>{formatTime(job.received_at)}</time></p>
       {job.status === 'invoice_ready' && <p role="status">Repair and invoice saved.</p>}
-      {!isFixtureMode && ['accepted', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
-        <ContractorTimetable slug={partnerSlug} jobId={job.id}
-          onBooked={() => setJob((item) => ({ ...item, status: 'scheduled' }))} />}
+      {!isFixtureMode && job.status === 'received' && <p className="muted">Accept the repair to choose a time from the tenant’s saved availability.</p>}
+      {pendingAcceptance && <p className="muted">Retry acceptance to unlock the tenant’s saved times.</p>}
+      {!isFixtureMode && !pendingAcceptance &&
+        ['accepted', 'slots_offered', 'scheduled', 'in_progress', 'completed', 'invoice_ready'].includes(job.status) &&
+        <ContractorTimetable slug={partnerSlug} jobId={job.id} location={repairTimeLocation(property.address)}
+          disabled={Boolean(pending) || checking} onBookingChange={setBookingVisit}
+          onBooked={markVisitScheduled} />}
       {editing && !retry && <form className="repair-outcome" onSubmit={(event) => {
         event.preventDefault()
         if (editing === 'complete' && summary.trim()) void act({ action: 'complete', body: { summary: summary.trim() } })
@@ -754,8 +742,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
         </div>
       </form>}
       {error && <p className="error" role="alert">{error}</p>}
-      {check && !retry && !editing && <div className="actions">
-        <button className="secondary" disabled={checking || Boolean(pending)} onClick={() => void checkDelivery()}>
+      {check && !retryCommand && !editing && <div className="actions">
+        <button className="secondary" disabled={checking || Boolean(pending) || bookingVisit} onClick={() => void checkDelivery()}>
           {checking ? 'Checking resident case…' : check.label}
         </button>
       </div>}
@@ -763,8 +751,8 @@ function JobCard({ job: initial, partnerSlug }: { job: PartnerInboxJob; partnerS
       {actions.length > 0 && (!editing || retry) && <div className="actions" aria-label="Partner job actions">
         {actions.map((action) => (
           <button key={action} className={action === 'reject' ? 'secondary' : undefined}
-            disabled={checking || Boolean(pending)} onClick={() => begin(action)}>
-            {pending === action ? 'Sending…' : retry?.action === action ? 'Retry ' + labels[action].toLowerCase()
+            disabled={checking || Boolean(pending) || bookingVisit} onClick={() => begin(action)}>
+            {pending === action ? 'Sending…' : retryCommand?.action === action ? 'Retry ' + labels[action].toLowerCase()
               : labels[action]}
           </button>
         ))}
@@ -777,6 +765,7 @@ function Manager(props: {
   contractors: Contractor[] | undefined
   loadError: boolean
   onSaved: (contractor: Contractor) => void
+  onRemoved: (slug: string) => void
 }) {
   const home = useLoad(loadHome, 'Home details')
   const repairs = useLoad(api.listManagerRepairs, 'Repairs')
@@ -784,6 +773,9 @@ function Manager(props: {
     <div>
       <ManagerContractors {...props} region={home.data?.property.region ?? ''} onSaved={(contractor) => {
         props.onSaved(contractor)
+        repairs.reloadSilently()
+      }} onRemoved={(slug) => {
+        props.onRemoved(slug)
         repairs.reloadSilently()
       }} />
       <section className="inbox" aria-label="Repairs by contractor">
@@ -794,13 +786,17 @@ function Manager(props: {
         {repairs.failed ? <p className="panel error" role="alert">Repairs could not be loaded. Try refreshing.</p>
           : !repairs.data ? <p className="panel" role="status">Loading repairs…</p>
             : !repairs.data.length ? <p className="panel">No repair reports yet.</p>
-              : repairs.data.map(({ contractor, repairs: cases }) => {
-                const groupId = 'repair-group-' + (contractor?.id ?? 'unassigned')
-                return <section className="inbox manager-repair-group" key={groupId} aria-labelledby={groupId}>
-                  <h3 id={groupId}>{contractor?.name ?? 'Unassigned'}</h3>
-                  {cases.map((repair) => <ManagerCase key={repair.case.id} repair={repair} />)}
-                </section>
-              })}
+              : repairs.data.map(({ contractor, repairs: cases }) => (
+                <details className="manager-repair-group" key={contractor?.id ?? 'unassigned'}>
+                  <summary>
+                    <span>{contractor?.name ?? 'Unassigned'}</span>
+                    <span className="manager-repair-count">{cases.length} {cases.length === 1 ? 'repair' : 'repairs'}</span>
+                  </summary>
+                  <div className="inbox manager-repair-list">
+                    {cases.map((repair) => <ManagerCase key={repair.case.id} repair={repair} />)}
+                  </div>
+                </details>
+              ))}
       </section>
     </div>
   )
@@ -830,6 +826,7 @@ function ResidentCase({ item }: { item: MaintenanceCase }) {
     <article className="panel job">
       <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
+      <p><strong>Priority</strong> · {caseStatusLabel(item.urgency)}</p>
       <button className="secondary" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         {expanded ? 'Hide case details' : 'View case details'}
       </button>
@@ -843,15 +840,17 @@ function ManagerCase({ repair }: { repair: ManagerRepair }) {
   const [showTimeline, setShowTimeline] = useState(false)
   return (
     <article className="panel job">
-      <div className="inbox-heading"><h4>Case {item.id}</h4><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
+      <div className="inbox-heading"><h3>Case {item.id}</h3><span className="status" data-status={item.status.toLowerCase()}>{caseStatusLabel(item.status)}</span></div>
       <p className="issue-copy">{item.description}</p>
       <dl className="home-details">
+        <dt>Priority</dt><dd>{caseStatusLabel(item.urgency)}</dd>
         <dt>Repair address</dt><dd>{address}</dd>
         <dt>Unit</dt><dd>{unit}</dd>
+        <dt>Reported</dt><dd><time dateTime={item.created_at}>{formatTime(item.created_at)}</time></dd>
         <dt>Sharing approval</dt><dd>{item.sharing_approval
-          ? item.sharing_approval.shared_fields.map(statusLabel).join(', ') + ' · ' + formatTime(item.sharing_approval.recorded_at)
-          : 'No approval recorded'}</dd>
-        <dt>Appointment</dt><dd>{item.appointment ? slotLabel(item.appointment) : 'No confirmed appointment'}</dd>
+          ? item.sharing_approval.shared_fields.map(statusLabel).join(', ') : 'No approval recorded'}</dd>
+        <dt>Appointment</dt><dd>{item.appointment
+          ? slotLabel(item.appointment, repairTimeLocation(address)) : 'No confirmed appointment'}</dd>
       </dl>
       <RepairOutcome item={item} />
       <button className="secondary" aria-expanded={showTimeline} onClick={() => setShowTimeline(!showTimeline)}>

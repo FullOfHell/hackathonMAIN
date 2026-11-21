@@ -34,20 +34,10 @@ class Capabilities(BaseModel):
         return self
 
 
-class RoutingProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    estimated_price_eur: float = Field(gt=0)
-    quality_rating: int = Field(ge=1, le=5, strict=True)
-
-
 class Registration(BaseModel):
     name: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
     capabilities: Capabilities
-    routing: RoutingProfile | None = None
 
 
 class ContractorCreate(BaseModel):
@@ -56,14 +46,12 @@ class ContractorCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     slug: str = Field(min_length=1, max_length=48, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
     region: str = Field(min_length=1, max_length=80)
-    routing: RoutingProfile | None = None
 
 
 class Contractor(BaseModel):
     name: str
     slug: str
     regions: list[str]
-    routing: RoutingProfile | None = None
 
 
 def consent_fields(fields: list[str]) -> list[str]:
@@ -96,9 +84,6 @@ def save_registration(conn, registration: Registration):
                                       "regions": json.loads(routing["regions"])})
     conn.execute("INSERT INTO partner_capabilities VALUES (?,?) ON CONFLICT(partner_id) DO UPDATE "
                  "SET manifest=excluded.manifest", (cap.partner_id, manifest.model_dump_json()))
-    if registration.routing:
-        conn.execute("INSERT OR IGNORE INTO contractor_routing (partner_id,profile) VALUES (?,?)",
-                     (cap.partner_id, registration.routing.model_dump_json()))
 
 
 def install_registrations(conn, directory=MANIFESTS):
@@ -108,18 +93,16 @@ def install_registrations(conn, directory=MANIFESTS):
 
 LOCAL_CONTRACTORS = (
     "FROM partners p JOIN partner_capabilities k ON p.id=k.partner_id "
-    "LEFT JOIN contractor_routing r ON r.partner_id=p.id "
-    "WHERE p.active=1 AND p.base_url LIKE '/partners/%' AND json_extract(k.manifest,'$.kind')='delivery' "
+    "WHERE p.base_url LIKE '/partners/%' AND json_extract(k.manifest,'$.kind')='delivery' "
 )
 
 
 @router.get("/api/manager/contractors", response_model_exclude_none=True)
 def list_contractors(conn=Depends(get_db)) -> list[Contractor]:
     rows = conn.execute(
-        "SELECT p.name,p.base_url,p.regions,r.profile " + LOCAL_CONTRACTORS + "ORDER BY p.name,p.id")
+        "SELECT p.name,p.base_url,p.regions " + LOCAL_CONTRACTORS + "AND p.active=1 ORDER BY p.name,p.id")
     return [Contractor(name=row["name"], slug=row["base_url"].removeprefix("/partners/"),
-                       regions=json.loads(row["regions"]),
-                       routing=RoutingProfile.model_validate_json(row["profile"]) if row["profile"] else None)
+                       regions=json.loads(row["regions"]))
             for row in rows]
 
 
@@ -138,27 +121,24 @@ def add_contractor(body: ContractorCreate, conn=Depends(get_db)) -> Contractor:
         registration = Registration(
             name=body.name,
             base_url=base_url,
-            routing=body.routing,
             capabilities=template.capabilities.model_copy(update={
                 "partner_id": partner_id, "regions": [body.region],
             }),
         )
         save_registration(conn, registration)
-    return Contractor(name=body.name, slug=body.slug, regions=[body.region], routing=body.routing)
+    return Contractor(name=body.name, slug=body.slug, regions=[body.region])
 
 
-@router.put("/api/manager/contractors/{slug}/routing")
-def update_contractor_routing(slug: str, body: RoutingProfile, conn=Depends(get_db)) -> Contractor:
+@router.delete("/api/manager/contractors/{slug}")
+def remove_contractor(slug: str, conn=Depends(get_db)) -> dict[str, str]:
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT p.id,p.name,p.regions " + LOCAL_CONTRACTORS + "AND p.base_url=?",
+        row = conn.execute("SELECT p.id " + LOCAL_CONTRACTORS + "AND p.base_url=?",
                            (f"/partners/{slug}",)).fetchone()
         if not row:
             raise HTTPException(404, "Contractor not found.")
-        conn.execute("INSERT INTO contractor_routing (partner_id,profile) VALUES (?,?) "
-                     "ON CONFLICT(partner_id) DO UPDATE SET profile=excluded.profile",
-                     (row["id"], body.model_dump_json()))
-    return Contractor(name=row["name"], slug=slug, regions=json.loads(row["regions"]), routing=body)
+        conn.execute("UPDATE partners SET active=0 WHERE id=?", (row["id"],))
+    return {"slug": slug}
 
 
 @router.get("/api/integrations/partners")

@@ -2,25 +2,19 @@ import safety from '../../shared/intake-safety.json'
 import type { IntakeRequest, IntakeResult, MissingIntakeField, Urgency } from './types/domain'
 
 export const reportLimit = 1950
-export const availabilityPrefix = 'Availability: '
 export const safetyMessage = safety.message
 const gasSignal = new RegExp(safety.possible_gas_leak, 'gi')
 const gasNegation = new RegExp(safety.negation_prefix, 'i')
 
-export type IntakeFollowUp = Exclude<MissingIntakeField, 'heating_symptom'>
+export type IntakeFollowUp = Extract<MissingIntakeField, 'hot_water_affected'>
 
 export const intakeQuestions: Record<IntakeFollowUp, string> = {
   hot_water_affected: 'Is hot water also affected?',
-  availability_preferences: 'When are you usually home for a repair visit?',
 }
 
-export function nextIntakeFollowUp(result: IntakeResult | undefined, resolved: Set<IntakeFollowUp>, reportLength: number) {
-  return result?.missing_information.find((field): field is IntakeFollowUp => {
-    if (field === 'heating_symptom' || resolved.has(field)) return false
-    if (field === 'hot_water_affected') return true
-    return !result.missing_information.includes('heating_symptom')
-      && reportLength + availabilityPrefix.length + 2 <= reportLimit
-  })
+export function nextIntakeFollowUp(result: IntakeResult | undefined, resolved: Set<IntakeFollowUp>) {
+  return result?.missing_information.includes('hot_water_affected') && !resolved.has('hot_water_affected')
+    ? 'hot_water_affected' : undefined
 }
 
 export interface IntakeReview {
@@ -28,7 +22,7 @@ export interface IntakeReview {
   description: string
   symptoms: string
   availability: string
-  urgency: Urgency | ''
+  urgency: Urgency
 }
 
 const hotWaterNotes = new Map([
@@ -50,7 +44,7 @@ export function makeIntakeReview(input: IntakeRequest, result?: IntakeResult): I
     description: [input.report, note].filter(Boolean).join('\n'),
     symptoms: symptoms.map((item) => hotWaterNotes.get(item) ?? item.replace(/\s+/g, ' ')).join('\n'),
     availability: (result?.availability_preferences ?? []).map((item) => item.replace(/\s+/g, ' ')).join('\n'),
-    urgency: result?.urgency ?? '',
+    urgency: result?.urgency ?? 'normal',
   }
 }
 

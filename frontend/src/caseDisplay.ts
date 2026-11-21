@@ -8,8 +8,29 @@ export function formatTime(value: string) {
   return dateTime.format(new Date(value))
 }
 
-export function slotLabel(slot: AppointmentSlot) {
-  return formatTime(slot.start) + ' to ' + formatTime(slot.end) + ' (Aachen time)'
+const appointmentDate = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeZone: 'Europe/Berlin' })
+const appointmentTime = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Berlin',
+})
+
+export function repairTimeLocation(address?: string) {
+  const parts = address?.split(/[,\n]/).map((part) => part.trim())
+    .filter((part) => part && !/^(germany|deutschland|de)$/i.test(part)) ?? []
+  const locality = parts.at(-1) ?? ''
+  const city = locality.match(/(?:^|\s)\d{5}\s+([\p{L}][\p{L}\p{M} .'’–-]*)$/u)?.[1]
+  if (city) return city
+  if (parts.length > 1 && /^[\p{L}][\p{L}\p{M} .'’–-]*$/u.test(locality)) return locality
+  return 'Germany'
+}
+
+export function slotLabel(slot: Pick<AppointmentSlot, 'start' | 'end'>, location = 'Germany') {
+  const start = new Date(slot.start)
+  const end = new Date(slot.end)
+  const startDate = appointmentDate.format(start)
+  const endDate = appointmentDate.format(end)
+  const endLabel = startDate === endDate ? appointmentTime.format(end)
+    : endDate + ', ' + appointmentTime.format(end)
+  return `${startDate}, ${appointmentTime.format(start)} → ${endLabel} (${location} time)`
 }
 
 export function statusLabel(status: string) {

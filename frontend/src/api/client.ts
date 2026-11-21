@@ -6,7 +6,6 @@ import type {
   ContactChannel,
   Contractor,
   ContractorInput,
-  ContractorRouting,
   ContractorTimetableWeek,
   CreateCaseRequest,
   IntakeRequest,
@@ -244,10 +243,8 @@ export const api = {
     method: 'POST', body: JSON.stringify(body),
   }),
 
-  updateContractorRouting: (slug: string, body: ContractorRouting): Promise<Contractor> =>
-    request(`/api/manager/contractors/${encodeURIComponent(slug)}/routing`, {
-      method: 'PUT', body: JSON.stringify(body),
-    }),
+  removeContractor: (slug: string): Promise<{ slug: string }> =>
+    request(`/api/manager/contractors/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
 
   getAvailability: (unitId: string, residentId: string, week: number): Promise<TimetableWeek> =>
     request(`${availabilityPath(unitId, residentId)}?week=${week}&acting_resident_id=${encodeURIComponent(residentId)}`),

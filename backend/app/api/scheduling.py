@@ -76,8 +76,10 @@ def _assigned_case(conn, job_id, partner):
 
 
 def _can_schedule(job, case):
-    return (job["status"] == "accepted" and not job["pending_callback"]
-            and case["status"] == CaseStatus.PARTNER_REQUESTED)
+    return not job["pending_callback"] and (job["status"], case["status"]) in {
+        ("accepted", CaseStatus.PARTNER_REQUESTED),
+        ("slots_offered", CaseStatus.SLOTS_OFFERED),
+    }
 
 
 @router.get(JOB_CALENDAR)
@@ -86,8 +88,9 @@ def get_job_availability(job_id: str, partner: DeliveryPartner, week: Week = 0, 
     job, case = _assigned_case(conn, job_id, partner)
     monday, slots = scheduling.weekly_slots(week)
     can_book = _can_schedule(job, case)
-    available = [slot for slot in scheduling.slot_status(conn, case["resident_id"], slots)
-                 if slot["available"] and not slot["booked"] and not slot["past"]] if can_book else []
+    tenant_slots = [slot for slot in scheduling.slot_status(conn, case["resident_id"], slots)
+                    if slot["available"] and not slot["booked"] and not slot["past"]] if can_book else []
+    available = scheduling.unreserved_slots(conn, partner["partner_id"], tenant_slots)
     return {"week_start": monday, "slots": available, "can_book": can_book,
             "appointment": cases.get_case(conn, case["id"])["appointment"]}
 
@@ -111,7 +114,8 @@ def book_visit(job_id: str, partner: DeliveryPartner, body: VisitChoice, conn=De
             raise HTTPException(422, "Choose a slot from the timetable.") from exc
         slot = next((item for item in scheduling.slot_status(conn, case["resident_id"], slots)
                      if item["start"] == body.start), None)
-        if not slot or slot["past"] or slot["booked"] or not slot["available"]:
+        if (not slot or slot["past"] or slot["booked"] or not slot["available"]
+                or not scheduling.unreserved_slots(conn, partner["partner_id"], [slot])):
             raise HTTPException(409, "This slot is no longer available. Choose another time.")
 
         slot_id, booked_at = body.start, now_iso()

@@ -41,12 +41,17 @@ def create_job(job: PartnerJobRequest, response: Response, partner: DeliveryPart
     if job.service_type not in partner["categories"]:
         raise HTTPException(422, "unsupported service_type")
     job_id = f"job_{uuid.uuid4().hex[:8]}"
-    inserted = conn.execute("INSERT INTO partner_jobs VALUES (?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING",
-                            (job_id, partner["partner_id"], job.idempotency_key, job.request_id, job.model_dump_json(),
-                             "received", now_iso()))
+    inserted = conn.execute(
+        "INSERT INTO partner_jobs SELECT ?,?,?,?,?,?,? FROM partners WHERE id=? AND active=1 "
+        "ON CONFLICT(idempotency_key) DO NOTHING",
+        (job_id, partner["partner_id"], job.idempotency_key, job.request_id, job.model_dump_json(),
+         "received", now_iso(), partner["partner_id"]),
+    )
     if not inserted.rowcount:
         existing = conn.execute("SELECT id, status, request_id, partner_id FROM partner_jobs WHERE idempotency_key=?",
                                 (job.idempotency_key,)).fetchone()
+        if not existing:
+            raise HTTPException(410, "This contractor no longer accepts new repairs.")
         if existing["request_id"] != job.request_id or existing["partner_id"] != partner["partner_id"]:
             raise HTTPException(409, "idempotency key already belongs to a different case or provider")
         conn.commit()
@@ -242,6 +247,8 @@ def book(job_id: str, body: SlotChoice, partner: DeliveryPartner, conn=Depends(g
                                 (job["request_id"], job_id)).fetchone()
             if case and reservations(conn, case["resident_id"], slot["start"], slot["end"], job["request_id"]):
                 raise HTTPException(409, "The resident already has a visit at this time.")
+            if reservations(conn, partner["partner_id"], slot["start"], slot["end"], job["request_id"], contractor=True):
+                raise HTTPException(409, "The contractor already has a visit at this time.")
             conn.execute("INSERT INTO heatfix_bookings (job_id,slot_id) VALUES (?,?)", (job_id, body.slot_id))
             conn.execute("UPDATE partner_jobs SET status='scheduled' WHERE id=?", (job_id,))
     return {"job_id": job_id, "status": "scheduled", "slot_id": body.slot_id}

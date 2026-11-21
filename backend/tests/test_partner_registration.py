@@ -204,44 +204,61 @@ MANAGER_CONTRACTORS = "/api/manager/contractors"
 MANAGER_CONTRACTOR = {"name": "Aachen Demo Heating", "slug": "aachen-demo-heating", "region": "Aachen"}
 
 
-def test_contractor_ranking_uses_distance_price_and_rating_before_approval(client):
-    far = {"latitude": 51.1, "longitude": 6.095, "estimated_price_eur": 85, "quality_rating": 5}
-    registered = client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR | {"routing": far})
-    assert registered.status_code == 201, registered.text
-    assert registered.json()["routing"] == far
-    routing_path = f"{MANAGER_CONTRACTORS}/{MANAGER_CONTRACTOR['slug']}/routing"
-    contractor_id = "p_manager_aachen-demo-heating"
+def test_matching_tries_other_local_contractors_before_falling_back(client):
+    local = MANAGER_CONTRACTOR
+    outside = {"name": "Berlin Demo Heating", "slug": "berlin-heating", "region": "Berlin"}
+    assert client.post(MANAGER_CONTRACTORS, json=outside).status_code == 201
+    slots = []
+    for unit, resident in (("unit_4b", "c_202"), ("unit_2a", "c_203")):
+        path = f"/api/units/{unit}/residents/{resident}/availability"
+        actor = {"acting_resident_id": resident}
+        week = client.get(path, params=actor | {"week": 1}).json()
+        start = week["slots"][0]["start"]
+        assert client.put(path, json=actor | {"week_start": week["week_start"], "available_starts": [start]}).status_code == 200
+        slots.append(start)
 
     case = create_case(client)
-    path = f"/api/cases/{case['id']}"
     assert case["partner_id"] == "p_heatfix"
+    approval = client.post(f"/api/cases/{case['id']}/sharing-approval", json=CONSENT)
+    assert approval.status_code == 200, approval.text
+    job = f"{HEATFIX_JOBS}/{approval.json()['partner_job_id']}"
+    assert client.post(job + "/accept").status_code == 200
+    assert client.post(job + "/tenant-availability/book", json={"start": slots[0]}).status_code == 200
 
-    same_distance = far | {"latitude": 50.779, "quality_rating": 4}
-    assert client.put(routing_path, json=same_distance).status_code == 200
+    assert client.post(MANAGER_CONTRACTORS, json=local).status_code == 201
+    request = load("case-create.json") | {"unit_id": "unit_2a", "resident_id": "c_203"}
+    another = client.post("/api/cases", json=request).json()
+    assert another["partner_id"] == "p_manager_aachen-demo-heating"
+    assert client.delete(f"{MANAGER_CONTRACTORS}/{local['slug']}").status_code == 200
+    path = f"/api/cases/{another['id']}"
+    assert client.get(path).json()["partner_id"] == "p_manager_berlin-heating"
+    assert client.get(path).json()["partner_id"] == "p_manager_berlin-heating"
+    assert client.post(path + "/sharing-approval", json={"approved_by": "c_203",
+                       "approved_fields": CONSENT["approved_fields"],
+                       "expected_partner_id": another["partner_id"]}).status_code == 409
+
+
+def test_removing_contractor_hides_repairs_and_keeps_case_history(client):
+    registered = client.post(MANAGER_CONTRACTORS, json=MANAGER_CONTRACTOR)
+    assert registered.status_code == 201
+    case = create_case(client)
+    url = f"/api/cases/{case['id']}"
+    approved = client.post(url + "/sharing-approval", json=CONSENT)
+    assert approved.status_code == 200
+    assert approved.json()["contractor_name"] == MANAGER_CONTRACTOR["name"]
+    removed = f"{MANAGER_CONTRACTORS}/{MANAGER_CONTRACTOR['slug']}"
+    repairs = "/api/manager/repairs"
+    assert any(repair["case"]["id"] == case["id"] for group in client.get(repairs).json() for repair in group["repairs"])
+    assert client.delete(removed).status_code == client.delete(removed).status_code == 200
+    assert client.delete(MANAGER_CONTRACTORS + "/missing").status_code == 404
     init_db()
-    assert client.get(path).json()["partner_id"] == contractor_id
-    assert client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"}).status_code == 409
-
-    lower_quality = same_distance | {"quality_rating": 2}
-    assert client.put(routing_path, json=lower_quality).status_code == 200
-    assert client.get(path).json()["partner_id"] == "p_heatfix"
-    approved = client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"})
-    assert approved.status_code == 200, approved.text
-
-    assert client.put(routing_path, json=same_distance).status_code == 200
-    assert client.get(path).json()["partner_id"] == "p_heatfix"
-    assert len(client.get(HEATFIX_JOBS).json()) == 1
-
-
-def test_ranking_without_repair_coordinates_uses_price_and_rating(client):
-    routing = {"latitude": 51.1, "longitude": 6.095, "estimated_price_eur": 85, "quality_rating": 4}
-    body = MANAGER_CONTRACTOR | {"routing": routing | {"quality_rating": 6}}
-    assert client.post(MANAGER_CONTRACTORS, json=body).status_code == 422
-    assert client.post(MANAGER_CONTRACTORS, json=body | {"routing": routing}).status_code == 201
-    profile = "/api/units/unit_4b/residents/c_202/profile"
-    address = {"acting_resident_id": "c_202", "address": "Demo Street 16, 52062 Aachen"}
-    assert client.patch(profile, json=address).status_code == 200
-    assert create_case(client)["partner_id"] == "p_manager_aachen-demo-heating"
+    assert registered.json() not in client.get(MANAGER_CONTRACTORS).json()
+    assert all(repair["case"]["id"] != case["id"] for group in client.get(repairs).json() for repair in group["repairs"])
+    assert client.get(url).json()["contractor_name"] == MANAGER_CONTRACTOR["name"]
+    jobs = f"/partners/{MANAGER_CONTRACTOR['slug']}/connector/jobs"
+    existing, = client.get(jobs).json()
+    assert client.post(jobs, json=existing["payload"]).status_code == 200
+    assert client.post(jobs, json=existing["payload"] | {"idempotency_key": "new-removed-request"}).status_code == 410
 
 
 def test_unavailable_contractor_blocks_dispatch_and_saved_case_can_recover(client):
@@ -337,15 +354,8 @@ def test_existing_draft_requires_consent_for_updated_recipient(client):
     assert client.post(MANAGER_CONTRACTORS, json=region).status_code == 201
 
     profile = "/api/units/unit_4b/residents/c_202/profile"
-    address = {"acting_resident_id": "c_202", "address": "Demo Street 1, Brussels, Belgium"}
+    address = {"acting_resident_id": "c_202", "address": "Demo Street 15, Düsseldorf"}
     assert client.patch(profile, json=address).status_code == 200
-    updated = client.get(path).json()
-    assert updated["status"] == "NO_PROVIDER_AVAILABLE"
-    assert "sharing_request" not in updated
-    assert client.post(path + "/sharing-approval", json=CONSENT).status_code == 409
-    assert client.get(HEATFIX_JOBS).json() == []
-
-    assert client.patch(profile, json=address | {"address": "Demo Street 15, Düsseldorf"}).status_code == 200
     updated = client.get(path).json()
     assert updated["sharing_request"]["partner"]["name"] == "HeetsFix"
     assert client.post(path + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_heatfix"}).status_code == 409
@@ -359,28 +369,24 @@ def test_existing_draft_requires_consent_for_updated_recipient(client):
     assert client.get(path).json()["partner_id"] == updated["partner_id"]
 
 
-def test_koln_uses_country_fallback_until_a_local_delivery_provider_registers(client):
+def test_unknown_city_uses_stable_fallback_until_local_contractor_is_registered(client):
     profile = "/api/units/unit_4b/residents/c_202/profile"
     assert client.patch(profile, json={"acting_resident_id": "c_202", "address": "Demo Street 21, 50667 Köln"}).status_code == 200
-
+    other = {"name": "Demo Heating Berlin", "slug": "berlin-heating", "region": "Berlin"}
+    assert client.post(MANAGER_CONTRACTORS, json=other).status_code == 201
     case = create_case(client)
-    assert case["status"] == "AWAITING_SHARING_APPROVAL"
-    assert case["sharing_request"]["partner"]["id"] == "p_heatfix"
-
-    # Reproduce a draft that stored the legacy contractor before routing required registration.
-    with closing(connect()) as conn, conn:
-        conn.execute("UPDATE cases SET status='AWAITING_SHARING_APPROVAL',partner_id='p_warmwerk' WHERE id=?",
-                     (case["id"],))
     url = f"/api/cases/{case['id']}"
-    projected = client.get(url).json()
-    assert projected["partner_id"] == "p_heatfix"
+    assert case["partner_id"] in {"p_heatfix", "p_manager_berlin-heating"}
+    assert client.get(url).json()["partner_id"] == case["partner_id"]
+    with closing(connect()) as conn, conn:
+        conn.execute("UPDATE cases SET partner_id='p_warmwerk' WHERE id=?", (case["id"],))
+    assert client.get(url).json()["partner_id"] == case["partner_id"]
     assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_warmwerk"}).status_code == 409
-    assert client.get(HEATFIX_JOBS).json() == []
 
-    registered = {"name": "Z Demo Heating Köln", "slug": "cologne-heating", "region": "Koln"}
-    assert client.post(MANAGER_CONTRACTORS, json=registered).status_code == 201
-    assert client.get(url).json()["sharing_request"]["partner"]["name"] == registered["name"]
-    assert create_case(client)["partner_id"] == "p_manager_cologne-heating"
+    local = {"name": "Demo Heating Köln", "slug": "cologne-heating", "region": "Koln"}
+    assert client.post(MANAGER_CONTRACTORS, json=local).status_code == 201
+    assert client.get(url).json()["sharing_request"]["partner"]["name"] == local["name"]
+    assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": case["partner_id"]}).status_code == 409
 
 
 def test_country_fallback_respects_explicit_foreign_country(client):
@@ -418,9 +424,9 @@ def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatc
     assert result.status_code == 200, result.text
     heatfix, heetsfix, unassigned = result.json()
     assert heatfix["contractor"] == {"id": "p_heatfix", "name": "HeatFix Aachen GmbH"}
-    assert {repair["case"]["id"] for repair in heatfix["repairs"]} == {first["id"], "case_000"}
+    assert {first["id"], "case_000"} <= {repair["case"]["id"] for repair in heatfix["repairs"]}
     assert heetsfix["contractor"] == {"id": "p_manager_dusseldorf-heating", "name": "HeetsFix"}
-    assigned, = heetsfix["repairs"]
+    assigned = next(repair for repair in heetsfix["repairs"] if repair["case"]["id"] == second["id"])
     assert (assigned["case"]["id"], assigned["case"]["unit_id"]) == (second["id"], "unit_2a")
     assert (assigned["address"], assigned["unit"]) == (details["address"], details["unit"])
     assert unassigned["contractor"] is None

@@ -193,7 +193,7 @@ def test_home_edits_are_used_only_for_new_approved_orders(client, include_heatin
 def test_case_created_and_awaits_approval(client):
     case = create_case(client)
     assert case["status"] == "AWAITING_SHARING_APPROVAL"
-    assert case["partner_id"] == "p_heatfix"  # Köln partner filtered out by region
+    assert case["partner_id"] == "p_heatfix"  # Local registered contractor
     assert "address" in case["sharing_request"]["required_fields"]
     types = [e["type"] for e in client.get(f"/api/cases/{case['id']}/events").json()]
     assert types[0] == "maintenance.case_created"
@@ -203,6 +203,7 @@ def test_shared_case_response_fixture_matches_api_shape(client):
     case = create_case(client)
     fixture = load("case-response.json")
     assert set(case) == set(fixture)
+    assert case["contractor_name"] == fixture["contractor_name"]
     assert set(case["sharing_request"]) == set(fixture["sharing_request"])
 
 

@@ -35,13 +35,13 @@ export function CaseTimeline({ caseId, revision = 0 }: { caseId: string; revisio
     return label ? [{ ...event, label }] : []
   })
   return (
-    <section aria-label="Case timeline">
+    <section className="case-timeline" aria-label="Case timeline">
       <h3>Case timeline</h3>
       {failed && <p role="alert">Timeline unavailable. <button className="secondary chip"
         onClick={() => { manual.current = true; setFailed(false); setAttempt((value) => value + 1) }}>Retry timeline</button></p>}
-      {milestones ? milestones.length ? <ol className="timeline">{milestones.map((event) =>
+      {milestones ? milestones.length ? <ol className="timeline" role="list">{milestones.map((event) =>
         <li key={event.id}>
-          {event.label}
+          <strong>{event.label}</strong>
           <time dateTime={event.timestamp}>{formatTime(event.timestamp)}</time>
         </li>)}</ol> : <p>No updates yet.</p> : !failed && <p role="status">Loading case timeline…</p>}
     </section>
@@ -69,7 +69,11 @@ export function RepairOutcome({ item }: { item: MaintenanceCase }) {
   )
 }
 
-export function CaseProgress({ initial, active }: { initial: MaintenanceCase; active: boolean }) {
+export function CaseProgress({ initial, active, location }: {
+  initial: MaintenanceCase
+  active: boolean
+  location?: string
+}) {
   const notify = useActionFeedback()
   const manual = useRef(false)
   const [current, setCurrent] = useState(initial)
@@ -144,14 +148,14 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
       {!refreshing && refresh > 0 && !refreshResult?.failed && <p className="muted" role="status">Case updated.</p>}
       {current.appointment ? <div className="appointment" role="status">
         <strong>Appointment confirmed</strong>
-        <p>{slotLabel(current.appointment)}</p>
+        <p>{slotLabel(current.appointment, location)}</p>
       </div> : current.status === 'SLOTS_OFFERED' ? <form onSubmit={confirm}>
         <fieldset disabled={booking || Boolean(lockedSlot)}>
           <legend>Choose an offered time</legend>
           {current.slots.map((option) => <label className="field-row selectable" key={option.slot_id}>
             <input type="radio" name="appointment-slot" checked={(lockedSlot || selection) === option.slot_id}
               onChange={() => setSelection(option.slot_id)} />
-            {slotLabel(option)}
+            {slotLabel(option, location)}
           </label>)}
         </fieldset>
         {bookingError && <p className="error" role="alert">{bookingError}</p>}
@@ -160,7 +164,7 @@ export function CaseProgress({ initial, active }: { initial: MaintenanceCase; ac
         : current.status === 'NEEDS_HUMAN_REVIEW' || current.status === 'FAILED' || current.status === 'CANCELLED'
           ? <p role="status">{caseStatusLabel(current.status)}. No appointment was confirmed.</p>
           : isFixtureMode ? <p role="status">Waiting for your contractor to offer appointment times.</p>
-            : <p role="status">Your contractor can book a time from <a href="#availability">your availability</a>.</p>}
+            : <p role="status">Your contractor can book one of the times you saved when reviewing your report.</p>}
       <RepairOutcome item={current} />
       <CaseTimeline caseId={caseId} revision={timelineRevision} />
     </section>
