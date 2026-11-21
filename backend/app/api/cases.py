@@ -35,7 +35,7 @@ def _current_contractor(conn, case):
     resident = next((r for r in ctx["residents"] if r["id"] == case["resident_id"]), None)
     if not resident:
         return None
-    region = svc.repair_region(conn, ctx, resident)
+    region = svc.repair_region(ctx, resident)
     partner = svc.select_partner(conn, case, region)
     return partner["id"] if partner else None
 
@@ -86,6 +86,13 @@ def update_resident_profile(unit_id: str, resident_id: str, body: ResidentProfil
         ).fetchone()
         if resident is None:
             raise HTTPException(404, "resident not found for this unit")
+        if "address" in changes and not svc.at_property_address(svc.unit_context(conn, unit_id), dict(resident)):
+            linked = conn.execute(
+                "SELECT c.id FROM cases c JOIN outage_cases m ON m.case_id=c.id "
+                "WHERE c.resident_id=? AND c.unit_id=? AND c.status=?",
+                (resident_id, unit_id, CaseStatus.AWAITING_SHARING_APPROVAL)).fetchall()
+            for row in linked:
+                outages.withdraw(conn, row["id"], svc.get_case(conn, row["id"])["building_repair"])
         return svc.resident_profile(resident)
 
 
@@ -143,18 +150,45 @@ def create_case(body: CaseCreate, conn=Depends(get_db), partner_client=Depends(g
     svc.record_event(conn, case_id, "maintenance.case_created", f"resident:{body.resident_id}",
                      {"channel": body.source_channel, "issue_type": body.issue_type, "unit_id": body.unit_id})
     svc.transition(conn, case_id, CaseStatus.TRIAGED, "system")
-    region = svc.repair_region(conn, ctx, resident)
+    region = svc.repair_region(ctx, resident)
     partner = svc.select_partner(conn, {"id": case_id, "resident_id": resident["id"], "issue_type": body.issue_type}, region)
     if partner:
         conn.execute("UPDATE cases SET partner_id=? WHERE id=?", (partner["id"], case_id))
         svc.transition(conn, case_id, CaseStatus.AWAITING_SHARING_APPROVAL, "system",
                        {"partner_id": partner["id"], "reason": "contractor matching for city and availability"})
-        if region and svc.normalize_location(region) == svc.normalize_location(ctx["property"]["region"]):
+        if svc.at_property_address(ctx, resident):
             outages.detect(conn, body, ctx["property"]["id"], partner["id"], ts)
     else:
         svc.transition(conn, case_id, CaseStatus.NO_PROVIDER_AVAILABLE, "system",
                        {"reason": "no active contractor has availability for this repair"})
     conn.commit()
+    outages.confirm_scope(conn, case_id, partner_client)
+    return _with_sharing_request(conn, svc.get_case(conn, case_id))
+
+
+@router.put("/cases/{case_id}/report")
+def update_case_report(case_id: str, body: CaseCreate, conn=Depends(get_db), partner_client=Depends(get_partner_client)):
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        case = _case_or_404(conn, case_id)
+        if body.resident_id != case["resident_id"]:
+            raise HTTPException(403, "only the reporting resident can edit this report")
+        if case["status"] not in UNAPPROVED_REPAIR_STATES or case["sharing_approval"]:
+            raise HTTPException(409, "this report is no longer editable")
+        if any(getattr(body, key) != case[key] for key in ("unit_id", "issue_type", "source_channel")):
+            raise HTTPException(422, "the unit, issue type and source channel are fixed")
+        if all(getattr(body, key) == case[key] for key in ("description", "symptoms", "availability_preferences", "urgency")):
+            return _with_sharing_request(conn, case)
+        ts = now_iso()
+        conn.execute("UPDATE cases SET description=?,symptoms=?,availability_preferences=?,urgency=?,updated_at=? WHERE id=?",
+                     (body.description, json.dumps(body.symptoms), json.dumps(body.availability_preferences), body.urgency, ts, case_id))
+        svc.record_event(conn, case_id, "case.report_updated", f"resident:{body.resident_id}")
+        if outages.reports_no_heat(body.symptoms, body.description) != outages.reports_no_heat(case["symptoms"], case["description"]):
+            outages.withdraw(conn, case_id, case["building_repair"])
+            ctx = svc.unit_context(conn, body.unit_id)
+            resident = next(r for r in ctx["residents"] if r["id"] == body.resident_id)
+            if case["partner_id"] and svc.at_property_address(ctx, resident):
+                outages.detect(conn, body, ctx["property"]["id"], case["partner_id"], ts)
     outages.confirm_scope(conn, case_id, partner_client)
     return _with_sharing_request(conn, svc.get_case(conn, case_id))
 

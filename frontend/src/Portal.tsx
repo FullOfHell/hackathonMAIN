@@ -17,7 +17,7 @@ import { caseStatusLabel, formatTime, noContractorsLabel, repairTimeLocation, sl
 import { intakeQuestions, makeIntakeReview, nextIntakeFollowUp, possibleGasLeak, reportLimit, reviewEntries, reviewSymptoms, safetyMessage } from './intake'
 import type { IntakeFollowUp, IntakeReview } from './intake'
 import type {
-  Contractor, IntakeRequest, MaintenanceCase, ManagerRepair, PartnerAction, PartnerCommand,
+  Contractor, CreateCaseRequest, IntakeRequest, MaintenanceCase, ManagerRepair, PartnerAction, PartnerCommand,
   PartnerInboxJob, RepairInvoiceInput, Resident, ResidentProfileChanges, SharingApprovalRequest, SharingRequest, UnitContext,
 } from './types/domain'
 import './Portal.css'
@@ -320,13 +320,13 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
     setError('')
     try {
       if (step === 1 && reviewed) {
-        const created = await api.createCase({
+        const body: CreateCaseRequest = {
           unit_id: home.unit_id, resident_id: resident.id, issue_type: 'heating_repair',
           description: reviewed.description.trim(), source_channel: 'portal_chat',
           symptoms: reviewSymptoms(reviewed.symptoms), availability_preferences: reviewEntries(reviewed.availability),
           urgency: reviewed.urgency,
-        })
-        setCurrent(created)
+        }
+        setCurrent(current ? await api.updateCaseReport(current.id, body) : await api.createCase(body))
         notify('success', 'Your heating report was saved.')
         setStep(2)
       } else if (current && request && handoffReady && approved) {
@@ -355,7 +355,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
         else showError('The contractor has not confirmed receipt. Check this case before trying again.')
       }
     } catch {
-      if (current) {
+      if (step === 2 && current) {
         const latest = await api.getCase(current.id).catch(() => null)
         if (latest?.partner_job_id || latest?.status === 'NEEDS_HUMAN_REVIEW') {
           setCurrent(latest)
@@ -398,6 +398,11 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
       setBusy(false)
     }
   }
+
+  const backToSummary = !dispatch && !current?.sharing_approval && (request || noContractor) &&
+    <button type="button" className="secondary" disabled={busy || profileSaving} onClick={() => {
+      setError(''); setApproved(false); setStep(1)
+    }}>Back to summary</button>
 
   function reset() {
     setIssue(''); setHotWater(null); setReviewed(null); setQuestion(null); setAvailabilityPending(false); setSafety(false)
@@ -481,7 +486,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           {availabilityPending && <p className="muted availability-reminder" role="status">Save or discard your availability changes to continue.</p>}
           <div className="actions">
             <button type="button" className="secondary" disabled={busy || availabilityPending}
-              onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back</button>
+              onClick={() => { setError(''); setSafety(false); setStep(0) }}>Back to description</button>
             <button disabled={busy || availabilityPending || safety || reviewed.description.trim().length < 3}>
               {busy ? 'Saving…' : 'Continue to sharing'}
             </button>
@@ -513,7 +518,9 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           </label>
           {!handoffReady && <p className="error" role="alert">Some required details are unavailable. The report cannot be sent.</p>}
           {error && <p className="error" role="alert">{error}</p>}
-          <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
+          <div className="actions">{backToSummary}
+            <button disabled={!approved || busy || profileSaving || !handoffReady}>{busy ? 'Sending…' : dispatch ? 'Retry sending' : 'Approve and send'}</button>
+          </div>
         </form> : <div>
           <h2 ref={stepHeading} tabIndex={-1}>{noContractor ? noContractorsLabel : 'Report saved for review'}</h2>
           <p>{noContractor
@@ -523,6 +530,7 @@ function Report({ home, active }: { home: UnitContext; active: boolean }) {
           <CaseTimeline caseId={current.id} />
           {error && <p className="error" role="alert">{error}</p>}
           <div className="actions">
+            {backToSummary}
             {noContractor && <button type="button" onClick={() => void checkContractors()} disabled={busy || profileSaving}>
               {busy ? 'Checking…' : 'Check contractor availability'}
             </button>}

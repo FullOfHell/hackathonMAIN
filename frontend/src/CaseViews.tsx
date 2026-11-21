@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, invoiceUrl, isFixtureMode } from './api/client'
-import { useActionFeedback, useBeforeSend } from './actionFeedback'
+import { useActionFeedback } from './actionFeedback'
 import { caseStatusLabel, formatTime, slotLabel, timelineEventLabel } from './caseDisplay'
 import type { CaseEvent, MaintenanceCase } from './types/domain'
 
@@ -74,7 +74,6 @@ export function CaseProgress({ initial, active, location }: {
   active: boolean
   location?: string
 }) {
-  const beforeSend = useBeforeSend()
   const notify = useActionFeedback()
   const manual = useRef(false)
   const [current, setCurrent] = useState(initial)
@@ -120,7 +119,6 @@ export function CaseProgress({ initial, active, location }: {
     setBooking(true)
     setBookingError('')
     try {
-      if (!await beforeSend('Book ' + slotLabel(slot, location) + ' · ' + caseId)) return
       setLockedSlot(slot.slot_id)
       const response = await api.selectSlot(caseId, slot.slot_id, current.resident_id)
         .catch(() => api.getCase(caseId).catch(() => null))

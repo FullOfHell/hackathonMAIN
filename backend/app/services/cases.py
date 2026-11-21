@@ -74,23 +74,47 @@ def normalize_location(value: str) -> str:
     return " ".join(re.findall(r"[^\W_]+", text))
 
 
-def repair_region(conn: sqlite3.Connection, ctx: dict, resident: dict) -> str | None:
-    original = ctx["property"]
+def service_area(region: str) -> tuple[str, str]:
+    city, _, country = region.partition(",")
+    country = normalize_location(country)
+    return normalize_location(city), "de" if country in {"", "de", "germany", "deutschland"} else country
+
+
+def at_property_address(ctx: dict, resident: dict) -> bool:
     address = resident.get("address")
-    if not address or normalize_location(address) == normalize_location(original["address"]):
-        return original["region"]
-    location = re.sub(r" (?:germany|deutschland|de)$", "", normalize_location(address))
-    location = re.sub(r" [0-9]{5}$", "", location)
-    regions = {normalize_location(original["region"])}
-    for row in conn.execute("SELECT regions FROM partners"):
-        regions.update(normalize_location(region) for region in json.loads(row["regions"]))
-    return max((region for region in regions if region and (region == location or location.endswith(" " + region))),
-               key=len, default=None)
+    return not address or normalize_location(address) == normalize_location(ctx["property"]["address"])
 
 
-def select_partner(conn: sqlite3.Connection, case: dict, region: str | None) -> dict | None:
+def repair_region(ctx: dict, resident: dict) -> tuple[str, str] | None:
+    property_ = ctx["property"]
+    address = resident.get("address")
+    if at_property_address(ctx, resident):
+        return service_area(property_["region"])
+    # Demo address format: street, postal code and city, optional country.
+    address = re.sub(r"[,\s]+(?:germany|deutschland|de)\s*$", "", address, flags=re.IGNORECASE)
+    parts = [part.strip() for part in address.rsplit(",", 2)]
+    if len(parts) == 1:
+        match = re.search(r"\b\d+\w*\s+([^\d,]+)$", address)
+        if match:
+            locality = match[1]
+        elif all(word.isalpha() for word in normalize_location(address).split()):
+            locality = address
+        else:
+            return None
+        country = ""
+    elif len(parts) == 2 and (match := re.search(r"\b\d{4,6}\s+([^\d,]+)$", parts[0])):
+        locality, country = match[1], parts[1]
+    else:
+        locality = parts[1]
+        country = parts[2] if len(parts) == 3 else ""
+    locality = re.sub(r"\b\d{4,6}\b", "", locality).strip()
+    return service_area(f"{locality},{country}") if locality else None
+
+
+def select_partner(conn: sqlite3.Connection, case: dict, region: tuple[str, str] | None) -> dict | None:
     """Try available local contractors before a stable, per-case random order elsewhere."""
-    region_key = normalize_location(region) if region else None
+    if region is None:
+        return None
     local, elsewhere = [], []
     for row in conn.execute(
         "SELECT p.id,p.name,p.regions FROM partners p JOIN partner_capabilities k ON k.partner_id=p.id "
@@ -98,8 +122,11 @@ def select_partner(conn: sqlite3.Connection, case: dict, region: str | None) -> 
         "AND 'maintenance.case_created' IN (SELECT value FROM json_each(k.manifest,'$.triggers')) "
         "AND ? IN (SELECT value FROM json_each(p.service_types)) ORDER BY p.name,p.id", (case["issue_type"],)
     ):
-        cities = {normalize_location(city) for city in json.loads(row["regions"])}
-        (local if region_key in cities else elsewhere).append(dict(row))
+        areas = [service_area(area) for area in json.loads(row["regions"])]
+        if region in areas:
+            local.append(dict(row))
+        elif case["issue_type"] == "heating_repair" and any(country == region[1] for _, country in areas):
+            elsewhere.append(dict(row))
     elsewhere.sort(key=lambda partner: sha256(f"{case['id']}:{partner['id']}".encode()).digest())
     if not local and not elsewhere:
         return None

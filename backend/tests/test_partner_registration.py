@@ -378,11 +378,26 @@ def test_unknown_city_uses_stable_fallback_until_local_contractor_is_registered(
     url = f"/api/cases/{case['id']}"
     assert case["partner_id"] in {"p_heatfix", "p_manager_berlin-heating"}
     assert client.get(url).json()["partner_id"] == case["partner_id"]
+    with closing(connect()) as conn, conn:
+        conn.execute("UPDATE cases SET partner_id='p_warmwerk' WHERE id=?", (case["id"],))
+    assert client.get(url).json()["partner_id"] == case["partner_id"]
+    assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": "p_warmwerk"}).status_code == 409
 
     local = {"name": "Demo Heating Köln", "slug": "cologne-heating", "region": "Koln"}
     assert client.post(MANAGER_CONTRACTORS, json=local).status_code == 201
     assert client.get(url).json()["sharing_request"]["partner"]["name"] == local["name"]
     assert client.post(url + "/sharing-approval", json=CONSENT | {"expected_partner_id": case["partner_id"]}).status_code == 409
+
+
+def test_country_fallback_respects_explicit_foreign_country(client):
+    profile = "/api/units/unit_4b/residents/c_202/profile"
+    address = {"acting_resident_id": "c_202", "address": "Demo Street 1, 1000 Brussels, Belgium"}
+    assert client.patch(profile, json=address).status_code == 200
+    case = create_case(client)
+    assert case["partner_id"] is None
+    contractor = MANAGER_CONTRACTOR | {"region": "Ghent, Belgium"}
+    assert client.post(MANAGER_CONTRACTORS, json=contractor).status_code == 201
+    assert client.get(f"/api/cases/{case['id']}").json()["sharing_request"]["partner"]["name"] == contractor["name"]
 
 
 def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatch_address(client):
@@ -402,7 +417,7 @@ def test_manager_groups_repairs_across_units_by_contractor_and_preserves_dispatc
                 "expected_partner_id": "p_manager_dusseldorf-heating"}
     assert client.post(f"/api/cases/{second['id']}/sharing-approval", json=approval).status_code == 200
 
-    uncovered = "Demo Street 16, 10115 Berlin"
+    uncovered = "Demo Street 16, 1000 Brussels, Belgium"
     assert client.patch(profile, json=details | {"address": uncovered}).status_code == 200
     third = client.post("/api/cases", json=report).json()
     result = client.get("/api/manager/repairs")
